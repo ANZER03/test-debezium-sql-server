@@ -66,6 +66,18 @@
         "signal.kafka.groupId": "debezium-signal-consumer",
 
         "_comment_incremental_snapshot_chunk": "Rows per chunk in incremental snapshot (smaller = more frequent dedup, larger = faster)",
-        "incremental.snapshot.chunk.size": "1024"
+        "incremental.snapshot.chunk.size": "1024",
+
+        "_comment_avro_key_converter": "Use Confluent Avro converter for message keys (Part 2: ~90% size reduction vs JSON)",
+        "key.converter": "io.confluent.connect.avro.AvroConverter",
+
+        "_comment_avro_key_schema_registry": "Schema Registry URL for key schemas — schemas registered once, referenced by 4-byte ID",
+        "key.converter.schema.registry.url": "http://schema-registry:8081",
+
+        "_comment_avro_value_converter": "Use Confluent Avro converter for message values (binary format with embedded schema ID)",
+        "value.converter": "io.confluent.connect.avro.AvroConverter",
+
+        "_comment_avro_value_schema_registry": "Schema Registry URL for value schemas — single registry for all topics",
+        "value.converter.schema.registry.url": "http://schema-registry:8081"
     }
 }

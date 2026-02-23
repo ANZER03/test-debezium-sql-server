@@ -123,12 +123,13 @@ services:
       start_period: 30s                                # Grace period before first check (SQL Server startup)
 
   # ---------------------------------------------------------------------------
-  # Debezium Kafka Connect
-  # Runs the Kafka Connect framework with pre-installed Debezium connectors.
+  # Debezium Kafka Connect (custom image with Confluent Avro converter)
+  # Built from connect/Dockerfile which extends debezium/connect:2.3 with
+  # Confluent Avro JARs (io.confluent.connect.avro.AvroConverter).
   # The SQL Server connector captures CDC changes and streams them to Kafka topics.
   # ---------------------------------------------------------------------------
   kafka-connect:
-    image: debezium/connect:2.3                        # Debezium Connect image (already local, includes SQL Server connector)
+    build: ./connect                                   # Build custom image from connect/Dockerfile
     container_name: kafka-connect
     depends_on:
       - kafka                                          # Needs Kafka for storing connector configs/offsets/status
@@ -150,15 +151,14 @@ services:
       OFFSET_STORAGE_TOPIC: "connect-offsets"          # Topic for connector offset storage (tracks CDC position)
       STATUS_STORAGE_TOPIC: "connect-status"           # Topic for connector status updates
 
-      # -- Serialization: use JSON converter with schema --
-      # The Debezium image natively supports JsonConverter.
-      # Each message will include the full schema in the JSON payload,
-      # making it self-describing and easy to inspect in Kafka UI.
-      # For Avro serialization, configure it at the connector level instead.
-      KEY_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"            # Serialize message keys as JSON
-      VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"          # Serialize message values as JSON
-      CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "true"                            # Include schema in key JSON messages
-      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "true"                          # Include schema in value JSON messages
+      # -- Serialization: use Confluent Avro converter (Part 2) --
+      # AvroConverter serializes messages in Avro binary format, registering
+      # schemas once in Confluent Schema Registry (5-byte magic header + schema ID).
+      # This reduces message size ~90% compared to JSON with embedded schemas.
+      KEY_CONVERTER: "io.confluent.connect.avro.AvroConverter"               # Serialize message keys as Avro
+      VALUE_CONVERTER: "io.confluent.connect.avro.AvroConverter"             # Serialize message values as Avro
+      CONNECT_KEY_CONVERTER_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"    # Schema Registry for key schemas
+      CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"  # Schema Registry for value schemas
 
       # -- Replication factors for internal topics (dev/test: set to 1) --
       CONFIG_STORAGE_REPLICATION_FACTOR: "1"           # Replication for connect-configs topic
