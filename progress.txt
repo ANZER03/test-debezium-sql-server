@@ -60,6 +60,84 @@ Debezium Signal documentation: The Kafka message key identifies the target conne
 
 ---
 
+# Part 2 Implementation Progress - Avro + Confluent Schema Registry
+
+## Date: 2026-02-23
+
+## Issues Encountered and Solutions
+
+### Issue 2: Missing Transitive Dependencies for AvroConverter (NoClassDefFoundError)
+
+**Problem:**
+After creating `connect/Dockerfile` that downloaded individual Confluent Avro JARs via `curl`, Kafka Connect crashed on startup with:
+```
+java.lang.NoClassDefFoundError: com/google/common/cache/CacheLoader
+```
+and similar errors for other missing classes (Jackson, Avro core, etc.).
+
+**Root Cause:**
+`io.confluent.connect.avro.AvroConverter` has many transitive dependencies (Guava 32.0.1, Avro 1.11.x, Jackson, Confluent common, etc.). Downloading only the top-level JARs via `curl` leaves transitive dependencies unresolved.
+
+**Solution:**
+Switched to a multi-stage Docker build. The `confluentinc/cp-kafka-connect:7.7.7` image already has a fully resolved classpath in `/usr/share/java/kafka-serde-tools/`. The new Dockerfile copies the entire directory into the custom image:
+
+```dockerfile
+FROM confluentinc/cp-kafka-connect:7.7.7 AS cp-source
+FROM debezium/connect:2.3
+COPY --from=cp-source /usr/share/java/kafka-serde-tools/ /kafka/connect/confluent-avro/
+```
+
+This pulls in all transitive JARs (Guava 32.0.1, Avro 1.11.3, Jackson 2.14.x, etc.) without manually listing them.
+
+---
+
+### Issue 3: Kafka Connect Internal Topics cleanup.policy Not Compact (ConfigException)
+
+**Problem:**
+After deleting old CDC topics and the connect internal topics (`connect-offsets`, `connect-configs`, `connect-status`) for a clean slate, the Kafka Connect container crashed with:
+```
+ConfigException: Topic 'connect-offsets' supplied via the 'offset.storage.topic' property is
+required to have 'cleanup.policy=compact' but found the topic currently has
+'cleanup.policy=delete'
+```
+
+**Root Cause:**
+When the `connect-*` internal topics were deleted and then implicitly recreated by Kafka (e.g. by a client connecting before Connect could create them), Kafka applied the broker's default `cleanup.policy=delete`. Kafka Connect requires these three topics to use `cleanup.policy=compact`.
+
+**Solution:**
+Manually set `cleanup.policy=compact` on all three internal topics using `kafka-configs --alter`:
+```bash
+for topic in connect-offsets connect-configs connect-status; do
+  docker exec kafka kafka-configs \
+    --bootstrap-server kafka:29092 \
+    --entity-type topics \
+    --entity-name $topic \
+    --alter \
+    --add-config cleanup.policy=compact
+done
+```
+Then restarted the `kafka-connect` container. Connect started successfully on the next boot.
+
+---
+
+## Successfully Completed Steps (Part 2)
+
+1. ✅ Created `connect/Dockerfile` — multi-stage build copying `/usr/share/java/kafka-serde-tools` from `confluentinc/cp-kafka-connect:7.7.7`
+2. ✅ Modified `docker-compose.yml` — `kafka-connect` uses `build: ./connect`, `KEY_CONVERTER`/`VALUE_CONVERTER` set to `io.confluent.connect.avro.AvroConverter`, added `CONNECT_KEY/VALUE_CONVERTER_SCHEMA_REGISTRY_URL`
+3. ✅ Modified `connect/connector-config.json` — added `key.converter`, `key.converter.schema.registry.url`, `value.converter`, `value.converter.schema.registry.url`
+4. ✅ Built custom Docker image successfully
+5. ✅ Deleted old JSON CDC topics + connect internal topics (clean start)
+6. ✅ Fixed `cleanup.policy=compact` on internal topics before restarting Connect
+7. ✅ Redeployed connector with Avro config — status: RUNNING
+8. ✅ Verified all 12 Avro schemas registered in Schema Registry
+9. ✅ Updated `consumer/requirements.txt` → `confluent-kafka[avro]>=2.3.0`
+10. ✅ Rewrote `consumer/consumer.py` to use `DeserializingConsumer` + `AvroDeserializer`
+11. ✅ Confirmed `msg.value()` is a plain dict (no `schema`/`payload` wrapper)
+12. ✅ Confirmed `money`/`decimal` columns deserialize as Python `decimal.Decimal` objects natively
+13. ✅ Tested live end-to-end: producer INSERT/UPDATE/DELETE → Kafka (Avro) → consumer displays correctly
+
+---
+
 ## Additional Tests Available (Not Yet Executed)
 
 The following features are implemented and ready to test:
