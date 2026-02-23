@@ -1,0 +1,195 @@
+# =============================================================================
+# Docker Compose for Kafka CDC Pipeline
+# Services: Kafka (KRaft), Schema Registry, Kafka UI, SQL Server, Debezium Connect
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Kafka Broker 1 + KRaft Controller (combined mode)
+  # This node acts as BOTH a broker (handles messages) and controller (manages
+  # cluster metadata). In KRaft mode, ZooKeeper is not required.
+  # ---------------------------------------------------------------------------
+  kafka:
+    image: confluentinc/cp-kafka:7.7.7                # Confluent Kafka image (already local)
+    container_name: kafka                              # Fixed container name for easy reference
+    ports:
+      - "9092:9092"                                    # Expose broker to host on port 9092
+    environment:
+      # -- Node identity --
+      KAFKA_NODE_ID: 1                                 # Unique ID for this node in the KRaft cluster
+
+      # -- Listener security mapping --
+      # Maps each listener name to a security protocol (all PLAINTEXT = no TLS)
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
+
+      # -- Advertised listeners --
+      # These are the addresses that clients and other brokers will use to connect
+      # PLAINTEXT = internal Docker network address (for inter-broker communication)
+      # PLAINTEXT_HOST = address for host machine access (localhost)
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092'
+
+      # -- Internal topic replication --
+      # Set to 1 because we only have 2 brokers (safe for dev/test, not production)
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1        # Replication factor for __consumer_offsets topic
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1              # Default replication factor for auto-created topics
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0        # No delay for consumer group rebalance (faster startup)
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1 # Replication for transaction state topic
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1           # Minimum in-sync replicas for transaction topic
+
+      # -- KRaft mode configuration --
+      KAFKA_PROCESS_ROLES: 'broker,controller'         # This node runs as both broker AND controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:29093'  # Controller quorum: node 1 at kafka:29093
+
+      # -- Listener bindings --
+      # PLAINTEXT: internal broker communication on port 29092
+      # CONTROLLER: KRaft controller communication on port 29093
+      # PLAINTEXT_HOST: host-accessible listener on port 9092
+      KAFKA_LISTENERS: 'PLAINTEXT://kafka:29092,CONTROLLER://kafka:29093,PLAINTEXT_HOST://0.0.0.0:9092'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'    # Listener used for broker-to-broker communication
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'    # Listener used for controller communication
+
+      # -- Storage --
+      KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'        # Directory for Kafka log segments (message data)
+      CLUSTER_ID: 'MkU3OEVBNTcwNTJDRkFCMz'            # Pre-generated cluster ID (must match all nodes)
+
+  # ---------------------------------------------------------------------------
+  # Kafka Broker 2 (broker-only mode)
+  # Second broker for the cluster. Only acts as a broker (not a controller).
+  # Provides additional capacity and allows replication factor > 1.
+  # ---------------------------------------------------------------------------
+  kafka-broker-2:
+    image: confluentinc/cp-kafka:7.7.7                # Same Kafka image as broker 1 (already local)
+    container_name: kafka-broker-2                     # Fixed container name
+    ports:
+      - "9093:9093"                                    # Expose on port 9093 to avoid conflict with broker 1
+    depends_on:
+      - kafka                                          # Wait for broker 1 (controller) to start first
+    environment:
+      KAFKA_NODE_ID: 2                                 # Unique node ID (different from broker 1)
+      KAFKA_PROCESS_ROLES: 'broker'                    # This node is broker-only (no controller role)
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:29093'  # Points to node 1 as the controller
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'    # Must match controller listener name
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka-broker-2:29092,PLAINTEXT_HOST://localhost:9093'
+      KAFKA_LISTENERS: 'PLAINTEXT://kafka-broker-2:29092,PLAINTEXT_HOST://0.0.0.0:9093'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'    # Use PLAINTEXT for inter-broker traffic
+      KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'        # Log directory for this broker's data
+      CLUSTER_ID: 'MkU3OEVBNTcwNTJDRkFCMz'            # MUST match broker 1's cluster ID exactly
+
+  # ---------------------------------------------------------------------------
+  # Confluent Schema Registry
+  # Stores and serves Avro/JSON/Protobuf schemas for Kafka topics.
+  # Debezium Connect will automatically register CDC event schemas here.
+  # ---------------------------------------------------------------------------
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.7.7      # Confluent Schema Registry (already local)
+    container_name: schema-registry
+    depends_on:
+      - kafka                                          # Needs Kafka to store schemas in _schemas topic
+    ports:
+      - "8081:8081"                                    # REST API exposed on port 8081
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry                                   # Hostname for this instance
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'kafka:29092,kafka-broker-2:29092'  # Kafka brokers to connect to
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081                               # Listen on all interfaces, port 8081
+
+  # ---------------------------------------------------------------------------
+  # SQL Server 2019 (Developer Edition)
+  # Source database for CDC. Will host the AdventureWorks2019 sample database.
+  # Developer Edition includes full CDC support (same features as Enterprise).
+  # ---------------------------------------------------------------------------
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2019-latest  # SQL Server 2019 (will be pulled if not local)
+    container_name: sqlserver
+    ports:
+      - "1433:1433"                                    # Standard SQL Server port exposed to host
+    environment:
+      ACCEPT_EULA: "Y"                                 # Required: accept Microsoft EULA to run the image
+      MSSQL_SA_PASSWORD: "YourStrong!Passw0rd"         # SA (admin) password - must meet complexity rules
+      MSSQL_AGENT_ENABLED: "true"                      # CRITICAL: enables SQL Server Agent for CDC capture jobs
+      MSSQL_PID: "Developer"                           # Edition: Developer (free, full features, non-production)
+    volumes:
+      - sqlserver-data:/var/opt/mssql                  # Persist database files across container restarts
+      - ./sqlserver:/scripts                           # Mount local scripts into container at /scripts
+    healthcheck:
+      # Health check: try to connect to SQL Server every 10s, timeout after 5s
+      # SQL Server can take 20-30s to start, so we allow 10 retries
+      # -C flag trusts the self-signed server certificate (required for mssql-tools18+)
+      test: /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "YourStrong!Passw0rd" -Q "SELECT 1" -b -o /dev/null -C
+      interval: 10s                                    # Check every 10 seconds
+      timeout: 5s                                      # Timeout for each check
+      retries: 10                                      # Number of retries before marking unhealthy
+      start_period: 30s                                # Grace period before first check (SQL Server startup)
+
+  # ---------------------------------------------------------------------------
+  # Debezium Kafka Connect
+  # Runs the Kafka Connect framework with pre-installed Debezium connectors.
+  # The SQL Server connector captures CDC changes and streams them to Kafka topics.
+  # ---------------------------------------------------------------------------
+  kafka-connect:
+    image: debezium/connect:2.3                        # Debezium Connect image (already local, includes SQL Server connector)
+    container_name: kafka-connect
+    depends_on:
+      - kafka                                          # Needs Kafka for storing connector configs/offsets/status
+      - kafka-broker-2                                 # Both brokers should be up
+      - schema-registry                                # Needs Schema Registry for Avro serialization
+      - sqlserver                                      # Source database must be available
+    ports:
+      - "8083:8083"                                    # Kafka Connect REST API exposed on port 8083
+    environment:
+      # -- Connect cluster identity --
+      GROUP_ID: "1"                                    # Connect cluster group ID (all workers with same ID form a cluster)
+
+      # -- Kafka bootstrap servers --
+      BOOTSTRAP_SERVERS: "kafka:29092,kafka-broker-2:29092"  # Kafka brokers for Connect to use
+
+      # -- Internal topics for Connect framework --
+      # These topics store connector configurations, offsets, and status
+      CONFIG_STORAGE_TOPIC: "connect-configs"          # Topic for connector configuration storage
+      OFFSET_STORAGE_TOPIC: "connect-offsets"          # Topic for connector offset storage (tracks CDC position)
+      STATUS_STORAGE_TOPIC: "connect-status"           # Topic for connector status updates
+
+      # -- Serialization: use JSON converter with schema --
+      # The Debezium image natively supports JsonConverter.
+      # Each message will include the full schema in the JSON payload,
+      # making it self-describing and easy to inspect in Kafka UI.
+      # For Avro serialization, configure it at the connector level instead.
+      KEY_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"            # Serialize message keys as JSON
+      VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"          # Serialize message values as JSON
+      CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "true"                            # Include schema in key JSON messages
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "true"                          # Include schema in value JSON messages
+
+      # -- Replication factors for internal topics (dev/test: set to 1) --
+      CONFIG_STORAGE_REPLICATION_FACTOR: "1"           # Replication for connect-configs topic
+      OFFSET_STORAGE_REPLICATION_FACTOR: "1"           # Replication for connect-offsets topic
+      STATUS_STORAGE_REPLICATION_FACTOR: "1"           # Replication for connect-status topic
+
+  # ---------------------------------------------------------------------------
+  # Kafka UI (Provectus)
+  # Web-based interface for monitoring Kafka topics, consumer groups,
+  # Schema Registry schemas, and Kafka Connect connectors.
+  # ---------------------------------------------------------------------------
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest               # Kafka UI image (already local)
+    container_name: kafka-ui
+    depends_on:
+      - kafka                                          # Needs Kafka to browse topics
+      - schema-registry                                # Needs Schema Registry to display schemas
+      - kafka-connect                                  # Needs Connect to show connector status
+    ports:
+      - "8084:8080"                                    # Map container port 8080 to host port 8084
+    environment:
+      # -- Cluster configuration --
+      KAFKA_CLUSTERS_0_NAME: local                                             # Display name for the cluster in UI
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092,kafka-broker-2:29092      # Kafka broker addresses
+      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8081             # Schema Registry URL for schema viewing
+      # -- Kafka Connect integration --
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_NAME: debezium                           # Display name for Connect cluster in UI
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_ADDRESS: http://kafka-connect:8083       # Connect REST API URL
+
+# =============================================================================
+# Named volumes for data persistence
+# =============================================================================
+volumes:
+  sqlserver-data:                                      # Persists SQL Server data files between restarts

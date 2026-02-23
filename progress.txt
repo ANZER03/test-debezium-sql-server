@@ -1,0 +1,105 @@
+# Part 1 Implementation Progress - Incremental Snapshot with Kafka Signals
+
+## Date: 2026-02-23
+
+## Issues Encountered and Solutions
+
+### Issue 1: Signal Key Mismatch
+**Problem:**
+When sending the first incremental snapshot signal, the connector logs showed:
+```
+Signal key 'signal-1771852465' doesn't match the connector's name 'aw'
+```
+
+**Root Cause:**
+The Kafka signal message key must match the connector's `topic.prefix` configuration (in our case, "aw"), not an arbitrary signal ID. This is how Debezium identifies which connector should process the signal when multiple connectors are listening to the same signal topic.
+
+**Solution:**
+Modified `connect/send-signal.sh` to use the topic prefix as the Kafka message key:
+- Changed: `SIGNAL_KEY="aw"` (was using `SIGNAL_ID` as the key)
+- The signal ID remains unique for tracking purposes but goes in the payload, not the key
+
+**Reference:**
+Debezium Signal documentation: The Kafka message key identifies the target connector by matching against `topic.prefix`.
+
+---
+
+## Successfully Completed Steps
+
+1. ✅ Started all Docker Compose services (Kafka, Schema Registry, SQL Server, Connect, Kafka UI)
+2. ✅ Verified connectivity of all services:
+   - Kafka brokers accessible
+   - Schema Registry accessible (http://localhost:8081)
+   - Kafka Connect REST API accessible (http://localhost:8083)
+   - SQL Server healthy and accessible
+3. ✅ Set up AdventureWorks2019 database with CDC enabled on 5 tables:
+   - Person.Person
+   - Sales.Customer
+   - Sales.SalesOrderHeader
+   - Sales.SalesOrderDetail
+   - Production.Product
+4. ✅ Created signal table (`dbo.debezium_signal`) with CDC enabled
+5. ✅ Created `aw-signal` Kafka topic with 1 partition (required for ordering guarantees)
+6. ✅ Modified `connect/connector-config.json` to add signal configuration:
+   - `signal.enabled.channels: source,kafka`
+   - `signal.data.collection: AdventureWorks2019.dbo.debezium_signal`
+   - `signal.kafka.topic: aw-signal`
+   - `signal.kafka.bootstrap.servers: kafka:29092`
+   - `signal.kafka.groupId: debezium-signal-consumer`
+   - `incremental.snapshot.chunk.size: 1024`
+7. ✅ Deployed Debezium connector successfully (HTTP 201)
+8. ✅ Verified connector status: RUNNING
+9. ✅ Verified initial snapshot completed for all 5 tables
+10. ✅ Created `connect/send-signal.sh` script with filtering support
+11. ✅ Fixed signal key issue in send-signal.sh script
+
+12. ✅ Tested incremental snapshot signal successfully
+    - Sent signal with correct key (topic.prefix = "aw")
+    - Connector logs confirmed: "Requested 'INCREMENTAL' snapshot of data collections '[AdventureWorks2019.Production.Product]'"
+    - Snapshot completed: "incremental snapshotting of table 'AdventureWorks2019.Production.Product' finished"
+
+---
+
+## Additional Tests Available (Not Yet Executed)
+
+The following features are implemented and ready to test:
+
+1. **Filtered Incremental Snapshot:**
+   ```bash
+   ./connect/send-signal.sh snapshot Production.Product "ProductID > 500"
+   ```
+
+2. **Multiple Tables Snapshot:**
+   ```bash
+   ./connect/send-signal.sh snapshot "Production.Product,Person.Person"
+   ```
+
+3. **Stop Snapshot:**
+   ```bash
+   ./connect/send-signal.sh stop-snapshot Production.Product
+   ```
+
+4. **Concurrent Streaming + Snapshot:**
+   - Run producer to make changes: `python3 producer/producer.py`
+   - Send incremental snapshot signal simultaneously
+   - Verify watermark deduplication works (CDC events win over buffered reads)
+
+---
+
+## Stack Status
+
+All services are running and healthy:
+- Kafka (2 brokers): localhost:9092, localhost:9093
+- Schema Registry: http://localhost:8081
+- Kafka Connect: http://localhost:8083
+- SQL Server: localhost:1433
+- Kafka UI: http://localhost:8084
+
+CDC Topics Created:
+- aw.AdventureWorks2019.Person.Person
+- aw.AdventureWorks2019.Sales.Customer
+- aw.AdventureWorks2019.Sales.SalesOrderHeader
+- aw.AdventureWorks2019.Sales.SalesOrderDetail
+- aw.AdventureWorks2019.Production.Product
+
+Initial snapshot completed successfully. System ready for incremental snapshot testing.

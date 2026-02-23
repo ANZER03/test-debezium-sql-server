@@ -1,0 +1,8 @@
+# =============================================================================
+# producer/requirements.txt — Python dependencies for the CDC Data Producer
+# =============================================================================
+
+# pymssql: Pure Python DB-API 2.0 interface to Microsoft SQL Server
+# Used to connect to SQL Server and execute INSERT/UPDATE/DELETE statements
+# that generate CDC events captured by Debezium
+pymssql>=2.2.8

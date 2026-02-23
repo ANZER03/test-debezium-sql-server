@@ -1,0 +1,9 @@
+# =============================================================================
+# consumer/requirements.txt — Python dependencies for the CDC Event Consumer
+# =============================================================================
+
+# confluent-kafka: Confluent's Python client for Apache Kafka
+# Provides the Consumer class used to read CDC events from Kafka topics
+# The [avro] extra is NOT needed here since Debezium uses JSON format,
+# but we keep the base package for the core Consumer functionality
+confluent-kafka>=2.3.0

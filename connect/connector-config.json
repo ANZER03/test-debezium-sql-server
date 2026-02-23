@@ -1,0 +1,71 @@
+{
+    "name": "adventureworks-sqlserver-connector",
+
+    "config": {
+        "_comment_class": "Debezium SQL Server connector class - handles CDC from SQL Server",
+        "connector.class": "io.debezium.connector.sqlserver.SqlServerConnector",
+
+        "_comment_hostname": "SQL Server hostname - uses Docker service name for container networking",
+        "database.hostname": "sqlserver",
+
+        "_comment_port": "SQL Server port - default is 1433",
+        "database.port": "1433",
+
+        "_comment_user": "SQL Server login - SA has full access to CDC tables",
+        "database.user": "sa",
+
+        "_comment_password": "SQL Server password - must match MSSQL_SA_PASSWORD in docker-compose.yml",
+        "database.password": "YourStrong!Passw0rd",
+
+        "_comment_dbnames": "Comma-separated list of databases to capture changes from",
+        "database.names": "AdventureWorks2019",
+
+        "_comment_prefix": "Prefix for Kafka topic names - topics will be: aw.AdventureWorks2019.<schema>.<table>",
+        "topic.prefix": "aw",
+
+        "_comment_tables": "Comma-separated list of tables to capture (schema.table format). Only these 5 tables have CDC enabled in SQL Server.",
+        "table.include.list": "Person.Person,Sales.Customer,Sales.SalesOrderHeader,Sales.SalesOrderDetail,Production.Product",
+
+        "_comment_encrypt": "Disable TLS encryption for SQL Server connection (Docker dev environment)",
+        "database.encrypt": "false",
+
+        "_comment_trustcert": "Trust the server certificate without validation (required for dev/test)",
+        "database.trustServerCertificate": "true",
+
+        "_comment_history_bootstrap": "Kafka bootstrap servers for the schema history topic",
+        "schema.history.internal.kafka.bootstrap.servers": "kafka:29092",
+
+        "_comment_history_topic": "Dedicated Kafka topic where Debezium stores DDL schema change history. This allows Debezium to reconstruct table schemas after restarts.",
+        "schema.history.internal.kafka.topic": "schema-changes.adventureworks",
+
+        "_comment_snapshot": "Initial snapshot mode - 'initial' means Debezium will first snapshot all existing rows, then switch to streaming CDC changes",
+        "snapshot.mode": "initial",
+
+        "_comment_poll_interval": "How often (ms) Debezium polls the CDC tables for new changes. Lower = less latency, higher = less load.",
+        "poll.interval.ms": "1000",
+
+        "_comment_max_batch": "Maximum number of change events in a single batch sent to Kafka",
+        "max.batch.size": "1024",
+
+        "_comment_tombstones": "Generate tombstone events (null value) for DELETE operations. Useful for Kafka log compaction.",
+        "tombstones.on.delete": "true",
+
+        "_comment_signal_channels": "Enable both SQL signaling table and Kafka signal channel for incremental snapshots",
+        "signal.enabled.channels": "source,kafka",
+
+        "_comment_signal_data_collection": "Fully-qualified signaling table used for watermark markers (required even when using Kafka signals)",
+        "signal.data.collection": "AdventureWorks2019.dbo.debezium_signal",
+
+        "_comment_signal_kafka_topic": "Kafka topic the connector polls for snapshot signals",
+        "signal.kafka.topic": "aw-signal",
+
+        "_comment_signal_kafka_bootstrap": "Kafka brokers for the signal consumer",
+        "signal.kafka.bootstrap.servers": "kafka:29092",
+
+        "_comment_signal_kafka_group": "Consumer group for signal polling",
+        "signal.kafka.groupId": "debezium-signal-consumer",
+
+        "_comment_incremental_snapshot_chunk": "Rows per chunk in incremental snapshot (smaller = more frequent dedup, larger = faster)",
+        "incremental.snapshot.chunk.size": "1024"
+    }
+}
