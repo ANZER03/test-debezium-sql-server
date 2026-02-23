@@ -1,0 +1,37 @@
+{
+    "name": "bench-json-noschema",
+
+    "config": {
+        "connector.class": "io.debezium.connector.sqlserver.SqlServerConnector",
+
+        "database.hostname": "sqlserver",
+        "database.port": "1433",
+        "database.user": "sa",
+        "database.password": "YourStrong!Passw0rd",
+        "database.names": "AdventureWorks2019",
+        "database.encrypt": "false",
+        "database.trustServerCertificate": "true",
+
+        "topic.prefix": "bench-json-noschema",
+
+        "table.include.list": "Sales.SalesOrderDetailBig",
+
+        "schema.history.internal.kafka.bootstrap.servers": "kafka:29092",
+        "schema.history.internal.kafka.topic": "schema-changes.bench-json-noschema",
+
+        "snapshot.mode": "initial",
+        "snapshot.isolation.level": "snapshot",
+
+        "poll.interval.ms": "500",
+        "max.batch.size": "8192",
+        "max.queue.size": "32768",
+
+        "tombstones.on.delete": "false",
+
+        "_comment_converter": "JsonConverter with schemas.enable=false: payload only, no inline schema. Lightest JSON variant — represents a 'lean JSON' production pattern.",
+        "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+        "key.converter.schemas.enable": "false",
+        "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+        "value.converter.schemas.enable": "false"
+    }
+}

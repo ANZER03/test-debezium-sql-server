@@ -1,0 +1,60 @@
+{
+  "timestamp": "2026-02-23T15:41:15.406954Z",
+  "config": {
+    "kafka_bootstrap": "localhost:9092",
+    "schema_registry_url": "http://localhost:8081",
+    "connect_url": "http://localhost:8083",
+    "expected_rows": 2000000,
+    "idle_timeout_sec": 60
+  },
+  "results": [
+    {
+      "connector": "bench-json-schema",
+      "format": "JSON + Schema",
+      "messages_consumed": 2000000,
+      "total_time_sec": 515.94,
+      "throughput_msg_sec": 3876.4,
+      "throughput_mb_sec": 17.095,
+      "total_data_mb": 8820.05,
+      "avg_msg_size_bytes": 4624.2,
+      "median_msg_size_bytes": 4626.0,
+      "p99_msg_size_bytes": 4634,
+      "latency_median_ms": 1548.8,
+      "latency_p95_ms": 2014.7,
+      "latency_p99_ms": 2891.9,
+      "size_vs_avro": "21.53x"
+    },
+    {
+      "connector": "bench-json-noschema",
+      "format": "JSON (no schema)",
+      "messages_consumed": 2000000,
+      "total_time_sec": 85.07,
+      "throughput_msg_sec": 23509.7,
+      "throughput_mb_sec": 15.229,
+      "total_data_mb": 1295.56,
+      "avg_msg_size_bytes": 679.2,
+      "median_msg_size_bytes": 681.0,
+      "p99_msg_size_bytes": 689,
+      "latency_median_ms": 2050.7,
+      "latency_p95_ms": 3215.2,
+      "latency_p99_ms": 4092.5,
+      "size_vs_avro": "3.16x"
+    },
+    {
+      "connector": "bench-avro",
+      "format": "Avro",
+      "messages_consumed": 2000000,
+      "total_time_sec": 67.4,
+      "throughput_msg_sec": 29674.4,
+      "throughput_mb_sec": 6.078,
+      "total_data_mb": 409.63,
+      "avg_msg_size_bytes": 214.8,
+      "median_msg_size_bytes": 220.0,
+      "p99_msg_size_bytes": 224,
+      "latency_median_ms": 4.0,
+      "latency_p95_ms": 1377.3,
+      "latency_p99_ms": 3880.7,
+      "size_vs_avro": "1.00x"
+    }
+  ]
+}
