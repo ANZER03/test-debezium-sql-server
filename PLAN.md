@@ -572,16 +572,16 @@ incremental      = on-demand snapshot while streaming (triggered via signal, sup
 ## Implementation Checklist
 
 ### Part 1: Incremental Snapshot
-- [ ] Create `sqlserver/create-signal-table.sql`
-- [ ] Execute signal table script in SQL Server container
-- [ ] Create `aw-signal` Kafka topic (1 partition)
-- [ ] Add signal config to `connect/connector-config.json`
-- [ ] Create `connect/send-signal.sh` (with filtering support)
-- [ ] Make script executable: `chmod +x connect/send-signal.sh`
-- [ ] Test: redeploy connector, trigger snapshot via Kafka signal
-- [ ] Test: verify concurrent streaming + snapshot
-- [ ] Test: trigger filtered snapshot with `additional-condition`
-- [ ] Test: stop snapshot signal
+- [x] Create `sqlserver/create-signal-table.sql`
+- [x] Execute signal table script in SQL Server container
+- [x] Create `aw-signal` Kafka topic (1 partition)
+- [x] Add signal config to `connect/connector-config.json`
+- [x] Create `connect/send-signal.sh` (with filtering support)
+- [x] Make script executable: `chmod +x connect/send-signal.sh`
+- [x] Test: redeploy connector, trigger snapshot via Kafka signal
+- [x] Test: verify concurrent streaming + snapshot
+- [x] Test: trigger filtered snapshot with `additional-condition`
+- [x] Test: stop snapshot signal
 
 ### Part 2: Avro + Schema Registry
 - [ ] Create `connect/Dockerfile`
