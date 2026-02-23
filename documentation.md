@@ -1224,3 +1224,832 @@ Reading chunk from Sales.SalesOrderDetail, start: [120321], end: [121317]
 - [ ] Test resume behavior after connector restart mid-snapshot
 
 **Next: Part 2 - Avro + Schema Registry** will reduce message sizes by ~90% and add schema evolution support.
+
+---
+
+# Part 2: Avro + Confluent Schema Registry
+
+## Table of Contents
+1. [Overview](#overview-2)
+2. [Architecture Decisions](#architecture-decisions-2)
+3. [Implementation Steps](#implementation-steps-2)
+4. [Troubleshooting](#troubleshooting-2)
+5. [Testing Guide](#testing-guide-2)
+6. [References](#references-2)
+
+---
+
+## Overview
+
+### What Changes in Part 2?
+
+Part 1 left the pipeline using JSON serialization with embedded schemas — every Kafka message carried the full Debezium schema definition alongside the payload. Part 2 replaces this with **Avro binary serialization** backed by **Confluent Schema Registry**.
+
+| Property | Part 1 (JSON + Embedded Schema) | Part 2 (Avro + Schema Registry) |
+|---|---|---|
+| Format | UTF-8 JSON | Avro binary |
+| Schema in message | Yes (full JSON schema object) | No — 5-byte header (magic + schema ID) |
+| Schema storage | None (inline) | Schema Registry (`_schemas` Kafka topic) |
+| Typical message size | ~8–12 KB per CDC event | ~200–500 bytes per CDC event |
+| Schema evolution | None | Full compatibility checking |
+| Consumer library | `confluent-kafka` + `json.loads()` | `confluent-kafka[avro]` + `AvroDeserializer` |
+
+### Avro Wire Format (Confluent)
+
+Every Avro message written by `AvroConverter` follows this 5-byte framing protocol:
+
+```
+Byte 0:    0x00            Magic byte — identifies Confluent Avro encoding
+Bytes 1–4: <schema_id>    4-byte big-endian integer — ID of schema in Schema Registry
+Bytes 5+:  <avro binary>  Avro-encoded payload
+```
+
+The consumer's `AvroDeserializer` reads the schema ID, fetches the schema from Schema Registry on first use (then caches it), and deserializes the binary payload into a Python dict.
+
+### Debezium Avro Envelope Structure
+
+The deserialized message value from `AvroDeserializer` is a flat Python dict — there is **no** `"schema"` / `"payload"` wrapper that was present in JSON mode:
+
+```python
+{
+    "before": {...} or None,   # Row before change (None for INSERT)
+    "after":  {...} or None,   # Row after change (None for DELETE)
+    "source": {                # Connector metadata
+        "db": "AdventureWorks2019",
+        "schema": "Production",
+        "table": "Product",
+        "lsn": "0000003b:00000170:0003",
+        ...
+    },
+    "op": "c",                 # Operation: r=snapshot, c=insert, u=update, d=delete
+    "ts_ms": 1706123456789,    # Debezium processing timestamp (ms since epoch)
+    "transaction": None        # Transaction metadata (may be None)
+}
+```
+
+---
+
+## Architecture Decisions
+
+### Decision 1: Custom Docker Image Instead of Installing JARs at Runtime
+
+**Problem:**
+`debezium/connect:2.3` does not include `io.confluent.connect.avro.AvroConverter`. The converter must be added to make Debezium serialize messages in Avro format.
+
+**Options Evaluated:**
+
+| Option | Pros | Cons |
+|---|---|---|
+| Mount a local JAR directory as a volume | Simple | JAR dependency management is manual |
+| Download JARs via `curl` in Dockerfile | Self-contained | Transitive dependency hell — see Issue 1 |
+| Multi-stage build (Chosen) | All transitive deps included | Requires pulling a second base image |
+
+**Decision: Multi-stage Docker build copying from `confluentinc/cp-kafka-connect:7.7.7`**
+
+```dockerfile
+# Stage 1: Source image that already has all Confluent JARs resolved
+FROM confluentinc/cp-kafka-connect:7.7.7 AS confluent-source
+
+# Stage 2: Debezium Connect as base, grafted with Confluent converter
+FROM debezium/connect:2.3
+COPY --from=confluent-source /usr/share/java/kafka-serde-tools /kafka/connect/confluent-avro
+```
+
+**Rationale:**
+- `confluentinc/cp-kafka-connect:7.7.7` ships with a fully resolved classpath in `/usr/share/java/kafka-serde-tools/` — Guava 32.0.1, Avro 1.11.3, Jackson 2.14.x, and 20+ other transitive JARs
+- Debezium auto-discovers converter plugins in subdirectories of `/kafka/connect/`
+- No version pinning required — all versions are already tested and compatible in the Confluent image
+
+**File:** `connect/Dockerfile`
+
+---
+
+### Decision 2: Set Avro Converters at Both Worker and Connector Level
+
+**Configuration in `docker-compose.yml` (worker-level defaults):**
+```yaml
+kafka-connect:
+  environment:
+    KEY_CONVERTER: "io.confluent.connect.avro.AvroConverter"
+    VALUE_CONVERTER: "io.confluent.connect.avro.AvroConverter"
+    CONNECT_KEY_CONVERTER_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
+    CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
+```
+
+**Configuration in `connect/connector-config.json` (connector-level overrides):**
+```json
+{
+    "key.converter": "io.confluent.connect.avro.AvroConverter",
+    "key.converter.schema.registry.url": "http://schema-registry:8081",
+    "value.converter": "io.confluent.connect.avro.AvroConverter",
+    "value.converter.schema.registry.url": "http://schema-registry:8081"
+}
+```
+
+**Rationale:**
+- Worker-level settings are the default for all connectors on this worker
+- Connector-level settings override the worker default per-connector
+- Setting both ensures the Avro converter is used regardless of how the connector is deployed or if worker defaults are changed later
+- The Schema Registry URL must use the Docker internal hostname (`schema-registry:8081`), not `localhost:8081`, because the connector runs inside the Docker network
+
+---
+
+### Decision 3: Schema Registry Subjects and Naming
+
+**How Subjects Are Named:**
+
+By default, `AvroConverter` registers schemas under the `TopicNameStrategy`:
+- Key schema: `<topic-name>-key`
+- Value schema: `<topic-name>-value`
+
+For our 5 CDC tables + the connector's internal topic:
+
+| Topic | Key Subject | Value Subject |
+|---|---|---|
+| `aw` (internal) | `aw-key` | `aw-value` |
+| `aw.AdventureWorks2019.Person.Person` | `aw.AdventureWorks2019.Person.Person-key` | `aw.AdventureWorks2019.Person.Person-value` |
+| `aw.AdventureWorks2019.Sales.Customer` | `aw.AdventureWorks2019.Sales.Customer-key` | `aw.AdventureWorks2019.Sales.Customer-value` |
+| `aw.AdventureWorks2019.Sales.SalesOrderHeader` | `aw.AdventureWorks2019.Sales.SalesOrderHeader-key` | `aw.AdventureWorks2019.Sales.SalesOrderHeader-value` |
+| `aw.AdventureWorks2019.Sales.SalesOrderDetail` | `aw.AdventureWorks2019.Sales.SalesOrderDetail-key` | `aw.AdventureWorks2019.Sales.SalesOrderDetail-value` |
+| `aw.AdventureWorks2019.Production.Product` | `aw.AdventureWorks2019.Production.Product-key` | `aw.AdventureWorks2019.Production.Product-value` |
+
+Total: **12 subjects** registered after initial snapshot.
+
+**Verification:**
+```bash
+curl -s http://localhost:8081/subjects | python3 -m json.tool
+```
+
+---
+
+### Decision 4: DeserializingConsumer Instead of Consumer + json.loads()
+
+**Part 1 consumer pattern (removed):**
+```python
+from confluent_kafka import Consumer
+consumer = Consumer({"bootstrap.servers": ..., "group.id": ...})
+msg = consumer.poll()
+data = json.loads(msg.value())
+payload = data["payload"]  # unwrap Debezium JSON envelope
+```
+
+**Part 2 consumer pattern:**
+```python
+from confluent_kafka import DeserializingConsumer
+from confluent_kafka.schema_registry import SchemaRegistryClient
+from confluent_kafka.schema_registry.avro import AvroDeserializer
+
+sr_client = SchemaRegistryClient({"url": "http://localhost:8081"})
+avro_deserializer = AvroDeserializer(sr_client)
+
+consumer = DeserializingConsumer({
+    "bootstrap.servers": "localhost:9092,localhost:9093",
+    "group.id": "cdc-consumer-group",
+    "auto.offset.reset": "latest",
+    "value.deserializer": avro_deserializer,
+})
+msg = consumer.poll(timeout=1.0)
+envelope = msg.value()  # Already a Python dict — no json.loads() needed
+op = envelope["op"]
+after = envelope["after"]
+```
+
+**Key difference:** `msg.value()` from `DeserializingConsumer` returns a ready-to-use Python dict. There is no `"schema"` / `"payload"` wrapper to strip — `envelope` is the Debezium envelope directly.
+
+**File:** `consumer/consumer.py`
+
+---
+
+### Decision 5: Decimal/Money Field Handling
+
+**How Debezium encodes SQL Server `money` and `decimal` columns in Avro:**
+
+Debezium maps `money`/`decimal` SQL Server types to the Avro `bytes` type with `logicalType: "decimal"`. When `confluent-kafka`'s `AvroDeserializer` deserializes these fields, it produces Python `decimal.Decimal` objects directly — the full precision is preserved.
+
+**Example output from consumer:**
+```python
+{'TotalDue': Decimal('23153.2339'), 'StandardCost': Decimal('1059.3100')}
+```
+
+No manual decoding is necessary. The `decode_debezium_decimal()` helper in `consumer.py` is retained for backward compatibility (handles `bytes` and `str` fallbacks) but is not triggered in normal Avro operation.
+
+---
+
+## Implementation Steps
+
+### Step 1: Create `connect/Dockerfile`
+
+**File:** `connect/Dockerfile`
+
+```dockerfile
+FROM confluentinc/cp-kafka-connect:7.7.7 AS confluent-source
+
+FROM debezium/connect:2.3
+COPY --from=confluent-source /usr/share/java/kafka-serde-tools /kafka/connect/confluent-avro
+```
+
+**Key Points:**
+- Stage 1 (`confluent-source`) sources all Confluent JARs including transitive deps
+- Stage 2 uses `debezium/connect:2.3` as the final runtime image
+- The `COPY` places JARs in `/kafka/connect/confluent-avro/`, which Debezium adds to the classpath automatically
+
+---
+
+### Step 2: Update `docker-compose.yml`
+
+**Change:** Replace `image: debezium/connect:2.3` with `build: ./connect` and add Avro env vars.
+
+```yaml
+kafka-connect:
+  build: ./connect                                   # Build from connect/Dockerfile
+  environment:
+    KEY_CONVERTER: "io.confluent.connect.avro.AvroConverter"
+    VALUE_CONVERTER: "io.confluent.connect.avro.AvroConverter"
+    CONNECT_KEY_CONVERTER_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
+    CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
+```
+
+---
+
+### Step 3: Update `connect/connector-config.json`
+
+**Added** these four properties to the connector config:
+
+```json
+{
+    "key.converter": "io.confluent.connect.avro.AvroConverter",
+    "key.converter.schema.registry.url": "http://schema-registry:8081",
+    "value.converter": "io.confluent.connect.avro.AvroConverter",
+    "value.converter.schema.registry.url": "http://schema-registry:8081"
+}
+```
+
+---
+
+### Step 4: Build the Custom Image
+
+```bash
+docker compose build kafka-connect
+```
+
+**Verify the image was built:**
+```bash
+docker images | grep kafka-connect
+```
+
+**Verify the Confluent JARs are present:**
+```bash
+docker run --rm test-kafka-structred-kafka-connect ls /kafka/connect/confluent-avro/ | head -20
+```
+
+Expected: `avro-1.11.3.jar`, `kafka-avro-serializer-7.7.7.jar`, `guava-32.0.1-jre.jar`, etc.
+
+---
+
+### Step 5: Clean Slate (Delete Old Topics)
+
+Before switching from JSON to Avro, delete the existing CDC topics and connect internal topics so the connector starts fresh with the new serialization format.
+
+**Delete CDC topics:**
+```bash
+for topic in \
+  aw.AdventureWorks2019.Person.Person \
+  aw.AdventureWorks2019.Sales.Customer \
+  aw.AdventureWorks2019.Sales.SalesOrderHeader \
+  aw.AdventureWorks2019.Sales.SalesOrderDetail \
+  aw.AdventureWorks2019.Production.Product \
+  schema-changes.adventureworks; do
+    docker exec kafka kafka-topics \
+      --bootstrap-server kafka:29092 \
+      --delete --topic "$topic" 2>/dev/null
+done
+```
+
+**Delete connect internal topics:**
+```bash
+for topic in connect-offsets connect-configs connect-status; do
+  docker exec kafka kafka-topics \
+    --bootstrap-server kafka:29092 \
+    --delete --topic "$topic" 2>/dev/null
+done
+```
+
+**IMPORTANT:** After deletion, set `cleanup.policy=compact` on the three internal topics before starting Connect (see Issue 2 in Troubleshooting).
+
+---
+
+### Step 6: Fix Internal Topic cleanup.policy
+
+After deleting the connect internal topics, recreate them with the required `cleanup.policy=compact`:
+
+```bash
+# Wait for Kafka to notice topic deletions (~2s), then fix policy
+sleep 3
+for topic in connect-offsets connect-configs connect-status; do
+  docker exec kafka kafka-configs \
+    --bootstrap-server kafka:29092 \
+    --entity-type topics \
+    --entity-name "$topic" \
+    --alter \
+    --add-config cleanup.policy=compact
+done
+```
+
+Then restart Kafka Connect:
+```bash
+docker compose restart kafka-connect
+```
+
+**Verify Connect is up:**
+```bash
+curl -s http://localhost:8083/ | python3 -m json.tool
+```
+
+---
+
+### Step 7: Redeploy the Connector
+
+```bash
+bash connect/deploy-connector.sh
+```
+
+**Verify connector is RUNNING:**
+```bash
+curl -s http://localhost:8083/connectors/adventureworks-sqlserver-connector/status \
+  | python3 -m json.tool
+```
+
+Expected:
+```json
+{
+    "connector": {"state": "RUNNING"},
+    "tasks": [{"id": 0, "state": "RUNNING"}]
+}
+```
+
+---
+
+### Step 8: Verify Schemas Registered
+
+After the connector completes the initial snapshot, verify all schemas are registered in Schema Registry:
+
+```bash
+curl -s http://localhost:8081/subjects | python3 -m json.tool
+```
+
+Expected — 12 subjects:
+```json
+[
+    "aw-key",
+    "aw-value",
+    "aw.AdventureWorks2019.Person.Person-key",
+    "aw.AdventureWorks2019.Person.Person-value",
+    "aw.AdventureWorks2019.Production.Product-key",
+    "aw.AdventureWorks2019.Production.Product-value",
+    "aw.AdventureWorks2019.Sales.Customer-key",
+    "aw.AdventureWorks2019.Sales.Customer-value",
+    "aw.AdventureWorks2019.Sales.SalesOrderDetail-key",
+    "aw.AdventureWorks2019.Sales.SalesOrderDetail-value",
+    "aw.AdventureWorks2019.Sales.SalesOrderHeader-key",
+    "aw.AdventureWorks2019.Sales.SalesOrderHeader-value"
+]
+```
+
+**Inspect a specific schema:**
+```bash
+curl -s "http://localhost:8081/subjects/aw.AdventureWorks2019.Production.Product-value/versions/latest" \
+  | python3 -m json.tool
+```
+
+---
+
+### Step 9: Update `consumer/requirements.txt`
+
+**Before:**
+```
+confluent-kafka>=2.3.0
+```
+
+**After:**
+```
+confluent-kafka[avro]>=2.3.0
+```
+
+The `[avro]` extra installs `fastavro` and registers the `AvroDeserializer` / `AvroSerializer` classes.
+
+**Install:**
+```bash
+pip install "confluent-kafka[avro]>=2.3.0"
+```
+
+---
+
+### Step 10: Rewrite `consumer/consumer.py`
+
+**Key changes from Part 1:**
+
+1. **Import changes:**
+   ```python
+   # Removed: from confluent_kafka import Consumer
+   # Added:
+   from confluent_kafka import DeserializingConsumer
+   from confluent_kafka.schema_registry import SchemaRegistryClient
+   from confluent_kafka.schema_registry.avro import AvroDeserializer
+   ```
+
+2. **Consumer construction:**
+   ```python
+   sr_client = SchemaRegistryClient({"url": SCHEMA_REGISTRY_URL})
+   avro_deserializer = AvroDeserializer(sr_client)
+
+   consumer = DeserializingConsumer({
+       "bootstrap.servers": KAFKA_BOOTSTRAP_SERVERS,
+       "group.id": CONSUMER_GROUP_ID,
+       "auto.offset.reset": offset_reset,
+       "value.deserializer": avro_deserializer,
+   })
+   ```
+
+3. **Message parsing:**
+   ```python
+   msg = consumer.poll(timeout=1.0)
+   envelope = msg.value()       # Direct dict — no json.loads(), no ["payload"]
+   op = envelope.get("op")
+   after = envelope.get("after")
+   before = envelope.get("before")
+   source = envelope.get("source", {})
+   ```
+
+**File:** `consumer/consumer.py`
+
+---
+
+## Troubleshooting
+
+### Issue 1: NoClassDefFoundError — Missing Transitive JAR Dependencies
+
+**Symptom:**
+Kafka Connect crashes on startup with:
+```
+java.lang.NoClassDefFoundError: com/google/common/cache/CacheLoader
+```
+or similar errors referencing Guava, Jackson, or Avro classes.
+
+**Root Cause:**
+`io.confluent.connect.avro.AvroConverter` has 20+ transitive dependencies. If only the top-level `kafka-avro-serializer.jar` is downloaded, all its dependencies are missing.
+
+**Trigger:**
+Original Dockerfile used `curl` to download individual JARs:
+```dockerfile
+RUN curl -L -o /kafka/connect/confluent-avro/kafka-avro-serializer.jar \
+    https://packages.confluent.io/.../kafka-avro-serializer-7.7.7.jar
+```
+
+This approach fails because it doesn't include Guava, Avro core, Jackson, etc.
+
+**Solution:**
+Use multi-stage build to copy the entire resolved classpath from an official Confluent image:
+```dockerfile
+FROM confluentinc/cp-kafka-connect:7.7.7 AS confluent-source
+FROM debezium/connect:2.3
+COPY --from=confluent-source /usr/share/java/kafka-serde-tools /kafka/connect/confluent-avro
+```
+
+**Key JARs included via this approach:**
+- `kafka-avro-serializer-7.7.7.jar`
+- `avro-1.11.3.jar`
+- `guava-32.0.1-jre.jar`
+- `jackson-databind-2.14.x.jar`
+- `confluent-common-7.7.7.jar`
+- ... and 15+ others
+
+---
+
+### Issue 2: ConfigException — connect-* Topics Have cleanup.policy=delete
+
+**Symptom:**
+Kafka Connect crashes on startup with:
+```
+ConfigException: Topic 'connect-offsets' supplied via the 'offset.storage.topic' property
+is required to have 'cleanup.policy=compact' but found the topic currently has
+'cleanup.policy=delete'
+```
+(Same error may appear for `connect-configs` and `connect-status`.)
+
+**Root Cause:**
+When the three Kafka Connect internal topics (`connect-offsets`, `connect-configs`, `connect-status`) are deleted and then auto-created by Kafka (before Connect can create them itself), Kafka applies the broker default `cleanup.policy=delete`. Kafka Connect requires `cleanup.policy=compact` for all three.
+
+**This happens when:**
+1. You manually delete the topics for a clean slate
+2. Some Kafka client (e.g. Connect health check, Schema Registry, or Kafka UI) connects and triggers topic creation before Kafka Connect starts
+3. Kafka uses broker defaults (`cleanup.policy=delete`) for auto-created topics
+
+**Solution:**
+After deletion, proactively alter the policy on all three topics before restarting Connect:
+
+```bash
+for topic in connect-offsets connect-configs connect-status; do
+  docker exec kafka kafka-configs \
+    --bootstrap-server kafka:29092 \
+    --entity-type topics \
+    --entity-name "$topic" \
+    --alter \
+    --add-config cleanup.policy=compact
+done
+```
+
+**Verify the fix:**
+```bash
+for topic in connect-offsets connect-configs connect-status; do
+  echo "=== $topic ==="
+  docker exec kafka kafka-configs \
+    --bootstrap-server kafka:29092 \
+    --entity-type topics \
+    --entity-name "$topic" \
+    --describe
+done
+```
+
+Expected: `cleanup.policy=compact` for all three.
+
+**Alternative (avoid the problem entirely):**
+Instead of deleting the internal topics, only delete the CDC topics:
+```bash
+# Safe: only delete data topics, not internal topics
+for topic in \
+  aw.AdventureWorks2019.Person.Person \
+  aw.AdventureWorks2019.Sales.Customer \
+  aw.AdventureWorks2019.Sales.SalesOrderHeader \
+  aw.AdventureWorks2019.Sales.SalesOrderDetail \
+  aw.AdventureWorks2019.Production.Product; do
+    docker exec kafka kafka-topics \
+      --bootstrap-server kafka:29092 \
+      --delete --topic "$topic"
+done
+```
+
+Then delete + redeploy the **connector** (not the container), which resets its offsets without touching the internal topics:
+```bash
+curl -X DELETE http://localhost:8083/connectors/adventureworks-sqlserver-connector
+bash connect/deploy-connector.sh
+```
+
+---
+
+### Issue 3: Consumer Still Receiving JSON (Not Avro)
+
+**Symptom:**
+Consumer raises:
+```
+confluent_kafka.error.ConsumeError: expected 5-byte magic header
+```
+or returns garbled binary data.
+
+**Cause:**
+Topics still contain old JSON-format messages from before the converter switch. The `AvroDeserializer` cannot parse JSON.
+
+**Solution:**
+Delete the CDC topics and let the connector re-snapshot them in Avro format:
+```bash
+for topic in \
+  aw.AdventureWorks2019.Person.Person \
+  aw.AdventureWorks2019.Sales.Customer \
+  aw.AdventureWorks2019.Sales.SalesOrderHeader \
+  aw.AdventureWorks2019.Sales.SalesOrderDetail \
+  aw.AdventureWorks2019.Production.Product; do
+    docker exec kafka kafka-topics \
+      --bootstrap-server kafka:29092 \
+      --delete --topic "$topic"
+done
+# Then redeploy connector to trigger new snapshot
+curl -X DELETE http://localhost:8083/connectors/adventureworks-sqlserver-connector
+bash connect/deploy-connector.sh
+```
+
+---
+
+### Issue 4: Schema Registry Connection Refused
+
+**Symptom:**
+Consumer raises:
+```
+confluent_kafka.error.SchemaRegistryError: 
+  Failed to connect to Schema Registry at http://localhost:8081
+```
+
+**Cause:**
+Schema Registry is not running, or the consumer is connecting to the wrong URL.
+
+**Verify Schema Registry is up:**
+```bash
+curl -s http://localhost:8081/subjects
+```
+
+**Verify subjects exist:**
+```bash
+curl -s http://localhost:8081/subjects | python3 -m json.tool
+```
+
+**If empty:** The connector hasn't run yet or registered schemas. Check connector status:
+```bash
+curl -s http://localhost:8083/connectors/adventureworks-sqlserver-connector/status
+```
+
+---
+
+## Testing Guide
+
+### Test 1: Verify Avro Format in Topics
+
+**Objective:** Confirm messages are in Avro format (not JSON).
+
+**Method 1: Check first bytes of a message:**
+```bash
+docker exec kafka kafka-console-consumer \
+    --bootstrap-server kafka:29092 \
+    --topic aw.AdventureWorks2019.Production.Product \
+    --max-messages 1 \
+    --from-beginning | xxd | head -3
+```
+
+Expected: First byte is `00` (Avro magic byte), followed by 4 bytes schema ID.
+
+**Method 2: Count registered schemas:**
+```bash
+curl -s http://localhost:8081/subjects | python3 -c \
+  "import json,sys; subjects=json.load(sys.stdin); print(f'{len(subjects)} subjects registered')"
+```
+
+Expected: `12 subjects registered`
+
+---
+
+### Test 2: Consumer Reads Snapshot Events
+
+**Objective:** Verify consumer can read existing snapshot events in Avro format.
+
+```bash
+python3 consumer/consumer.py --topics Product --from-beginning --count 5
+```
+
+**Expected output:**
+```
+  [Product] SNAPSHOT | 2026-02-23 14:45:36 | LSN: 0000003a:00006778:0003
+    NEW: {'ProductID': 327, 'Name': 'Down Tube', 'ProductNumber': 'DT-2377',
+          'Color': None, 'StandardCost': Decimal('0.0000'), 'ListPrice': Decimal('0.0000')}
+```
+
+**Key indicators of correct Avro deserialization:**
+- `Decimal('...')` for money/decimal columns (not raw bytes or base64 string)
+- No `json.JSONDecodeError`
+- No `confluent_kafka.error.ConsumeError`
+
+---
+
+### Test 3: Live End-to-End Test (INSERT/UPDATE/DELETE)
+
+**Objective:** Confirm the full pipeline: producer → SQL Server CDC → Kafka (Avro) → consumer.
+
+**Terminal 1 — Start the consumer:**
+```bash
+python3 consumer/consumer.py --topics Person Product
+```
+
+**Terminal 2 — Run the producer:**
+```bash
+python3 producer/producer.py
+```
+
+**Expected consumer output (within ~5 seconds of each producer operation):**
+
+For a producer INSERT:
+```
+  [Person] INSERT | 2026-02-23 14:54:32 | LSN: 0000003b:000001e8:0039
+    NEW: {'BusinessEntityID': 20793, 'PersonType': 'IN', 'FirstName': 'Alice',
+          'LastName': 'Davis', 'EmailPromotion': 0}
+```
+
+For a producer UPDATE:
+```
+  [Person] UPDATE | 2026-02-23 14:54:23 | LSN: 0000003b:00000170:0003
+    CHANGED: {'EmailPromotion': '2 -> 0'}
+```
+
+For a producer DELETE:
+```
+  [Person] DELETE | 2026-02-23 14:54:40 | LSN: 0000003b:00000210:0005
+    DELETED: {'BusinessEntityID': 20790, 'PersonType': 'SC', ...}
+```
+
+**Verified:** All three operation types confirmed working in live testing.
+
+---
+
+### Test 4: Schema Evolution (Informational)
+
+**Objective:** Understand how schema changes are handled.
+
+Schema Registry enforces **backward compatibility** by default. This means:
+- Consumers using the old schema can still read new messages
+- Adding optional fields (with defaults) is allowed
+- Removing required fields or changing types is rejected
+
+**Test a schema version:**
+```bash
+# List all versions for a subject
+curl -s "http://localhost:8081/subjects/aw.AdventureWorks2019.Production.Product-value/versions"
+
+# Get schema for a specific version
+curl -s "http://localhost:8081/subjects/aw.AdventureWorks2019.Production.Product-value/versions/1" \
+  | python3 -m json.tool
+```
+
+**Check compatibility mode:**
+```bash
+curl -s "http://localhost:8081/config" | python3 -m json.tool
+```
+
+Default: `{"compatibilityLevel": "BACKWARD"}`
+
+---
+
+### Test 5: Connector + Schema Registry Status
+
+**Full status check:**
+```bash
+# Connector running
+curl -s http://localhost:8083/connectors/adventureworks-sqlserver-connector/status \
+  | python3 -m json.tool
+
+# Schema Registry subjects count
+curl -s http://localhost:8081/subjects | python3 -c \
+  "import json,sys; s=json.load(sys.stdin); print(f'Subjects: {len(s)}')"
+
+# Topic message counts (Avro topics)
+for topic in \
+  aw.AdventureWorks2019.Person.Person \
+  aw.AdventureWorks2019.Sales.Customer \
+  aw.AdventureWorks2019.Sales.SalesOrderHeader \
+  aw.AdventureWorks2019.Sales.SalesOrderDetail \
+  aw.AdventureWorks2019.Production.Product; do
+    count=$(docker exec kafka kafka-run-class kafka.tools.GetOffsetShell \
+      --bootstrap-server kafka:29092 \
+      --topic "$topic" --time -1 2>/dev/null | \
+      awk -F: '{sum += $3} END {print sum}')
+    echo "$topic: $count messages"
+done
+```
+
+---
+
+## References
+
+### Confluent Documentation
+- [AvroConverter](https://docs.confluent.io/platform/current/schema-registry/connect.html)
+- [Schema Registry API](https://docs.confluent.io/platform/current/schema-registry/develop/api.html)
+- [Confluent Kafka Python](https://docs.confluent.io/platform/current/clients/confluent-kafka-python/html/index.html)
+
+### Debezium Documentation
+- [Debezium Avro Serialization](https://debezium.io/documentation/reference/2.3/configuration/avro.html)
+- [SQL Server Connector](https://debezium.io/documentation/reference/2.3/connectors/sqlserver.html)
+
+### Avro Specification
+- [Avro Logical Types (decimal)](https://avro.apache.org/docs/current/specification/#logical-types)
+- [Confluent Wire Format](https://docs.confluent.io/platform/current/schema-registry/fundamentals/serdes-develop/index.html#wire-format)
+
+### Project Files
+
+| File | Purpose |
+|---|---|
+| `connect/Dockerfile` | Multi-stage build: Debezium + Confluent Avro JARs |
+| `docker-compose.yml` | Sets Avro converters + Schema Registry URL as worker defaults |
+| `connect/connector-config.json` | Per-connector Avro converter overrides |
+| `consumer/consumer.py` | CDC consumer using `DeserializingConsumer` + `AvroDeserializer` |
+| `consumer/requirements.txt` | `confluent-kafka[avro]>=2.3.0` |
+| `progress.txt` | Detailed implementation log including issues encountered |
+
+---
+
+## Summary
+
+**What Part 2 Accomplished:**
+1. ✅ Built custom `kafka-connect` Docker image with Confluent `AvroConverter` via multi-stage build
+2. ✅ Configured Debezium to serialize all CDC events in Avro binary format
+3. ✅ Schema Registry automatically receives and stores schemas for all 12 subjects (key + value for 5 tables + 1 internal)
+4. ✅ Rewrote consumer to use `DeserializingConsumer` + `AvroDeserializer` — no manual JSON parsing
+5. ✅ SQL Server `money`/`decimal` columns deserialized as Python `Decimal` objects with full precision
+6. ✅ End-to-end live test confirmed: producer INSERT/UPDATE/DELETE → Avro Kafka → consumer display
+
+**Message Size Impact:**
+- Part 1 (JSON + embedded schema): ~8–12 KB per CDC event
+- Part 2 (Avro binary): ~200–500 bytes per CDC event
+- Reduction: ~90–95%
+
+**Production Readiness Checklist:**
+- [ ] Set Schema Registry replication factor to 3 in production
+- [ ] Configure Schema Registry with `SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR: 3`
+- [ ] Enable Schema Registry authentication for multi-tenant environments
+- [ ] Set `compatibilityLevel` per-subject based on consumer needs
+- [ ] Monitor Schema Registry storage (`_schemas` topic size)
+- [ ] Set up Schema Registry HA (multiple instances behind load balancer)
+- [ ] Test schema evolution with an actual DDL change (add column → new schema version)
