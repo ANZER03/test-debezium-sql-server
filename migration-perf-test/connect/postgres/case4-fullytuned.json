@@ -1,0 +1,27 @@
+{
+    "name": "pg-perf-case4-fullytuned",
+    "config": {
+        "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+        "database.hostname": "postgres",
+        "database.port": "5432",
+        "database.user": "postgres",
+        "database.password": "postgres",
+        "database.dbname": "benchdb",
+        "topic.prefix": "pg_perf_c4",
+        "table.include.list": "public.sales_order_detail_big",
+        "plugin.name": "pgoutput",
+        "publication.name": "debezium_pub",
+        "slot.name": "debezium_c4",
+        "snapshot.mode": "initial",
+        "_case": "PG Case 4 — FullyTuned: tasks=4, batch=8192, queue=32768, poll=200ms",
+        "tasks.max": "4",
+        "max.batch.size": "8192",
+        "max.queue.size": "32768",
+        "poll.interval.ms": "200",
+        "tombstones.on.delete": "false",
+        "key.converter": "io.confluent.connect.avro.AvroConverter",
+        "key.converter.schema.registry.url": "http://schema-registry:8081",
+        "value.converter": "io.confluent.connect.avro.AvroConverter",
+        "value.converter.schema.registry.url": "http://schema-registry:8081"
+    }
+}

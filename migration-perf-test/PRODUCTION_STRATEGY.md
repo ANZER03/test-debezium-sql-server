@@ -1,15 +1,17 @@
 # Production Migration Strategy
-## Debezium SQL Server → Kafka (Avro) — 2 Million Row Benchmark
+## Debezium → Kafka (Avro) — 2 Million Row Benchmark: SQL Server vs PostgreSQL
 
 **Branch:** `feature/migration-perf-test`  
 **Benchmark date:** 2026-02-25  
-**Table:** `AdventureWorks2019.Sales.SalesOrderDetailBig` (2,000,000 rows)  
-**Serialization:** Avro + Confluent Schema Registry  
-**Infrastructure:** Kafka Connect (Debezium SqlServerConnector), 2-broker Kafka cluster, SQL Server 2019 with CDC
+**Table:** `AdventureWorks2019.Sales.SalesOrderDetailBig` / `benchdb.public.sales_order_detail_big` (2,000,000 rows each)  
+**Serialization:** Avro + Confluent Schema Registry (Karapace)  
+**Infrastructure:** Kafka Connect (Debezium), 2-broker Kafka cluster, SQL Server 2019 with CDC + PostgreSQL 15 with `wal_level=logical`
 
 ---
 
 ## 1. Benchmark Results Summary
+
+### SQL Server (Debezium SqlServerConnector + CDC)
 
 | Case | tasks.max | batch | queue | poll | Time (s) | msg/s | MB/s | Peak Lag |
 |------|-----------|-------|-------|------|----------|-------|------|----------|
@@ -19,8 +21,19 @@
 | C4 — FullyTuned | 4 | 8,192 | 32,768 | 200ms | 66.3 | 30,177 | 6.10 | 1,971,541 |
 | C5 — UltraTuned | 4 | 16,384 | 65,536 | 100ms | 68.3 | 29,296 | 5.92 | 1,887,697 |
 
-All cases migrated exactly 2,000,000 messages of 212 bytes average (Avro encoded) = 403.9 MB total.  
-Charts: `results/charts/` (28 PNGs + interactive `dashboard.html`).
+All cases: 2,000,000 messages × 212 bytes average (Avro) = 403.9 MB total.
+
+### PostgreSQL (Debezium PostgresConnector + pgoutput)
+
+| Case | tasks.max | batch | queue | poll | Time (s) | msg/s | MB/s | Peak Lag |
+|------|-----------|-------|-------|------|----------|-------|------|----------|
+| C1 — Baseline | 1 | 2,048 | 8,192 | 1,000ms | 98.6 | 20,294 | 4.33 | 2,000,000 |
+| C2 — LargeBatch | 1 | 8,192 | 32,768 | 500ms | 120.8 | 16,561 | 3.53 | 1,993,794 |
+| **C3 — MultiThread** | **4** | **2,048** | **8,192** | **500ms** | **85.9** | **23,277** | **4.96** | 1,988,792 |
+| C4 — FullyTuned | 4 | 8,192 | 32,768 | 200ms | 112.5 | 17,782 | 3.79 | 2,000,000 |
+| C5 — UltraTuned | 4 | 16,384 | 65,536 | 100ms | 125.1 | 15,983 | 3.41 | 1,996,518 |
+
+All cases: 2,000,000 messages × 224 bytes average (Avro with before/after envelope) = 426.4 MB total.
 
 ---
 
@@ -205,3 +218,120 @@ The SQL Server Debezium connector's snapshot phase is CPU and I/O bound on the *
 4. Monitor SQL Server resource usage — it is the bottleneck
 
 At **37,166 msg/s sustained**, a 10-million-row table completes in ~4.5 minutes. A 100-million-row table completes in ~45 minutes with a single connector; with 5 parallel connectors on 5 different tables that would be simultaneous.
+
+---
+
+## 10. SQL Server vs PostgreSQL: Comparative Analysis
+
+### 10.1 Head-to-head throughput comparison
+
+| Case | MSSQL msg/s | PG msg/s | MSSQL Time | PG Time | PG slower by |
+|------|-------------|----------|------------|---------|--------------|
+| C1 — Baseline | **37,166** | 20,294 | 53.8s | 98.6s | 83% slower |
+| C2 — LargeBatch | 29,410 | 16,561 | 68.0s | 120.8s | 78% slower |
+| C3 — MultiThread | 28,022 | **23,277** | 71.4s | 85.9s | 20% slower |
+| C4 — FullyTuned | 30,177 | 17,782 | 66.3s | 112.5s | 69% slower |
+| C5 — UltraTuned | 29,296 | 15,983 | 68.3s | 125.1s | 85% slower |
+
+**SQL Server is consistently 20–85% faster than PostgreSQL** for snapshot-mode migration across all configurations. The gap narrows significantly in C3 (MultiThread), which is the only case where PostgreSQL benefits from `tasks.max=4`.
+
+### 10.2 Winner per database differs
+
+| Database | Best Case | Best Config | Best Speed |
+|----------|-----------|-------------|------------|
+| SQL Server | **C1 Baseline** | tasks=1, batch=2048, poll=1000ms | 37,166 msg/s |
+| PostgreSQL | **C3 MultiThread** | tasks=4, batch=2048, poll=500ms | 23,277 msg/s |
+
+This is a fundamental architectural difference:
+
+- **SQL Server CDC** snapshot is inherently single-threaded per table (the CDC scan is serialized). Adding tasks causes contention — task=1 wins.
+- **PostgreSQL WAL decoding** (pgoutput) can parallelize the logical replication stream across multiple WAL sender processes. tasks=4 with batch=2048 allows Connect to dispatch across slots more efficiently, yielding 15% improvement over PG-C1.
+
+### 10.3 Message size difference
+
+PostgreSQL Debezium messages include a `before`/`after` envelope in the Avro schema, producing **224 bytes/msg** vs SQL Server's **212 bytes/msg** — approximately 6% larger. This is inherent to the pgoutput logical replication protocol and cannot be easily eliminated without custom SMTs (Single Message Transforms).
+
+### 10.4 Why PostgreSQL is slower: root causes
+
+1. **WAL decoding overhead.** PostgreSQL logical replication requires the WAL sender process to decode the WAL (write-ahead log) into logical change records before the Debezium connector can read them. This decoding is CPU-bound on the PostgreSQL server side. SQL Server CDC writes directly to a change table that is simply read by the connector — no real-time decoding required.
+
+2. **Replication slot I/O.** Each logical replication slot maintains its own decoded WAL stream. The `pgoutput` plugin must track which LSN has been confirmed by each slot, creating additional I/O overhead per slot.
+
+3. **Envelope schema size.** The before/after envelope in PostgreSQL events adds ~12 bytes of schema overhead per message, requiring slightly more Avro serialization work.
+
+4. **Consistent throughput ceiling.** PostgreSQL's sustained ceiling is ~17–23k msg/s (depending on task count), while SQL Server's ceiling is ~29–37k msg/s. The PostgreSQL server CPU was the observed bottleneck.
+
+### 10.5 PostgreSQL-specific operational differences
+
+| Concern | SQL Server | PostgreSQL |
+|---------|-----------|------------|
+| CDC prerequisite | `sp_cdc_enable_table` per table | `wal_level=logical` + publication |
+| Replication slot management | None needed | One slot per connector (must monitor lag and drop stale slots) |
+| Snapshot isolation | `snapshot.isolation.level=snapshot` | Exported snapshot (automatic) |
+| Schema history topic | Required (`schema.history.internal.*`) | Required |
+| `before` image in events | Not included by default | Included (pgoutput default) — larger messages |
+| Slot cleanup risk | N/A | Stale slot with unconsumed WAL blocks PostgreSQL vacuum — **monitor and drop unused slots** |
+
+### 10.6 PostgreSQL recommended production configuration
+
+Based on the benchmark, use **C3 MultiThread** for PostgreSQL:
+
+```json
+{
+  "name": "migration-postgres-connector",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "database.hostname": "<PG_HOST>",
+    "database.port": "5432",
+    "database.user": "<USER>",
+    "database.password": "<PASSWORD>",
+    "database.dbname": "<DBNAME>",
+    "topic.prefix": "<avro_valid_prefix>",
+    "table.include.list": "<schema>.<table>",
+    "plugin.name": "pgoutput",
+    "slot.name": "<unique_slot_name>",
+    "publication.name": "debezium_pub",
+    "snapshot.mode": "initial",
+    "tasks.max": "4",
+    "max.batch.size": "2048",
+    "max.queue.size": "8192",
+    "poll.interval.ms": "500",
+    "tombstones.on.delete": "false",
+    "key.converter": "io.confluent.connect.avro.AvroConverter",
+    "key.converter.schema.registry.url": "http://<schema-registry>:8081",
+    "value.converter": "io.confluent.connect.avro.AvroConverter",
+    "value.converter.schema.registry.url": "http://<schema-registry>:8081"
+  }
+}
+```
+
+**PostgreSQL-specific requirements:**
+- `slot.name` must be unique per connector deployment — reuse causes conflicts
+- `publication.name` must exist before connector deploys: `CREATE PUBLICATION debezium_pub FOR TABLE <schema>.<table>;`
+- After migration completes, drop the replication slot: `SELECT pg_drop_replication_slot('<slot_name>');` — leaving it active causes WAL retention to grow unbounded
+
+### 10.7 Database selection guidance for migration projects
+
+| Scenario | Recommendation |
+|----------|---------------|
+| Source is SQL Server | Use Debezium SqlServerConnector, tasks=1, batch=2048. Expect ~37k msg/s. |
+| Source is PostgreSQL | Use Debezium PostgresConnector, tasks=4, batch=2048. Expect ~23k msg/s. |
+| Need fastest possible migration | SQL Server CDC snapshot is ~60% faster than PostgreSQL WAL decoding at peak. |
+| Production streaming CDC (not snapshot) | PostgreSQL pgoutput is more reliable for long-running streaming; SQL Server CDC tables can grow large if not purged. |
+| Multi-table parallel migration | Both databases: run one connector per table. PostgreSQL: ensure `max_replication_slots` ≥ number of concurrent connectors. |
+| Message size budget | SQL Server: 212B/msg. PostgreSQL: 224B/msg (6% larger due to before/after envelope). |
+
+### 10.8 At-scale time estimates
+
+Using best-case throughput per database:
+
+| Row count | SQL Server (37,166 msg/s) | PostgreSQL (23,277 msg/s) |
+|-----------|--------------------------|--------------------------|
+| 1M rows | ~27 seconds | ~43 seconds |
+| 10M rows | ~4.5 minutes | ~7.2 minutes |
+| 50M rows | ~22 minutes | ~36 minutes |
+| 100M rows | ~45 minutes | ~72 minutes |
+| 500M rows | ~3.7 hours | ~6 hours |
+| 1B rows | ~7.5 hours | ~12 hours |
+
+For tables >50M rows on either database, consider partitioned snapshot strategies using `snapshot.select.statement.overrides` to split the load across multiple connector instances.

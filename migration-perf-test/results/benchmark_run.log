@@ -1,0 +1,375 @@
+========================================================================
+  Debezium Avro Migration Benchmark — 5-Case Observability Edition
+  5 Cases | 2,000,000 rows | System: ['kafka-connect', 'kafka', 'kafka-broker-2', 'sqlserver', 'schema-registry']
+  Kafka: localhost:9092  |  Connect: http://localhost:8083
+  Kafka sample: 2.0s  |  System sample: 1.0s  |  Connect poll: 5.0s
+========================================================================
+Waiting for Kafka Connect...
+  Kafka Connect is ready.
+
+========================================================================
+  C1-Baseline
+  tasks=1  batch=2048  queue=8192  poll=1000ms
+========================================================================
+  Deleted connector: perf-case1-baseline
+  Deployed: perf-case1-baseline
+  Waiting for perf-case1-baseline RUNNING...
+    status error: 404 Client Error: Not Found for url: http://localhost:8083/connectors/perf-case1-baseline/status
+  perf-case1-baseline RUNNING (1 task(s)).
+  [SystemCollector] Started — sampling ['kafka-connect', 'kafka', 'kafka-broker-2', 'sqlserver', 'schema-registry'] every 1.0s
+  Waiting for topic 'perf_c1.AdventureWorks2019.Sales.SalesOrderDetailBig' to appear...
+  Topic found: perf_c1.AdventureWorks2019.Sales.SalesOrderDetailBig
+  Consuming 2,000,000 messages (idle_timeout=90s, sample_interval=2.0s) ...
+       Count      %   Elapsed       msg/s     MB/s    P50ms     AvgB
+  --------------------------------------------------------------------
+     158,691    7.9%      2.0s      79,202    16.00     1424      212
+     197,258    9.9%      4.0s      19,264     3.85        7      209
+     236,672   11.8%      6.0s      19,692     3.91       10      208
+     272,011   13.6%      8.0s      17,665     3.60        4      214
+     341,008   17.1%     10.0s      34,488     6.90        4      210
+     418,349   20.9%     12.0s      38,670     7.82        6      212
+     503,289   25.2%     14.0s      42,438     8.49        4      210
+     589,615   29.5%     16.0s      43,144     8.66        3      210
+     682,398   34.1%     18.0s      46,392     9.36        9      212
+     773,608   38.7%     20.0s      45,592     9.19        9      211
+     873,085   43.7%     22.0s      49,727     9.96       12      210
+     966,446   48.3%     24.0s      46,589     9.32       13      210
+   1,046,201   52.3%     26.0s      39,875     8.06        4      212
+   1,132,207   56.6%     28.0s      42,964     8.74        6      213
+   1,227,261   61.4%     30.0s      47,520     9.58        4      212
+   1,321,575   66.1%     32.0s      47,141     9.55        5      212
+   1,416,727   70.8%     34.0s      47,569     9.68        6      213
+   1,502,800   75.1%     36.0s      43,036     8.76        7      214
+   1,594,009   79.7%     38.0s      45,601     9.21        4      212
+   1,673,386   83.7%     40.0s      39,664     8.05        4      213
+   1,730,817   86.5%     42.0s      28,714     5.86        4      214
+   1,791,234   89.6%     44.0s      30,036     6.06        5      212
+   1,837,103   91.9%     46.0s      22,925     4.65        7      213
+   1,882,466   94.1%     48.0s      22,672     4.64        9      215
+   1,931,450   96.6%     50.0s      24,489     4.91        7      210
+   1,975,834   98.8%     52.0s      22,127     4.55        8      216
+
+  Reached 2,000,000 — done.
+  [SystemCollector] Stopped — 28 total samples
+
+  Result: 2,000,000 msgs | 53.8s | 37,166 msg/s | 403.9 MB | 212 B/msg
+         Peak consumer lag: 2,000,000 msgs | Min lag: 98,640 msgs
+
+========================================================================
+  C2-LargeBatch
+  tasks=1  batch=8192  queue=32768  poll=500ms
+========================================================================
+  Deleted connector: perf-case2-largebatch
+  Deployed: perf-case2-largebatch
+  Waiting for perf-case2-largebatch RUNNING...
+    status error: 404 Client Error: Not Found for url: http://localhost:8083/connectors/perf-case2-largebatch/status
+  perf-case2-largebatch RUNNING (1 task(s)).
+  [SystemCollector] Started — sampling ['kafka-connect', 'kafka', 'kafka-broker-2', 'sqlserver', 'schema-registry'] every 1.0s
+  Waiting for topic 'perf_c2.AdventureWorks2019.Sales.SalesOrderDetailBig' to appear...
+  Topic found: perf_c2.AdventureWorks2019.Sales.SalesOrderDetailBig
+  Consuming 2,000,000 messages (idle_timeout=90s, sample_interval=2.0s) ...
+       Count      %   Elapsed       msg/s     MB/s    P50ms     AvgB
+  --------------------------------------------------------------------
+     200,884   10.0%      2.0s      99,970    20.14     3168      211
+     240,052   12.0%      4.0s      19,538     3.88       10      208
+     289,983   14.5%      6.0s      24,955     5.09        8      214
+     336,355   16.8%      8.0s      23,184     4.61        6      209
+     387,859   19.4%     10.1s      25,174     5.08        5      211
+     449,136   22.5%     12.1s      30,638     6.16        5      211
+     502,486   25.1%     14.1s      26,497     5.31        5      210
+     550,637   27.5%     16.1s      24,076     4.88        9      212
+     599,633   30.0%     18.1s      24,475     4.86        6      208
+     645,020   32.3%     20.1s      22,694     4.62        5      214
+     706,544   35.3%     22.1s      30,752     6.12        4      209
+     755,063   37.8%     24.1s      24,241     4.90        4      212
+     811,963   40.6%     26.1s      28,442     5.71        4      210
+     868,153   43.4%     28.1s      27,788     5.57        4      210
+     929,337   46.5%     30.1s      30,582     6.16        9      211
+     991,571   49.6%     32.1s      30,950     6.21        3      210
+   1,048,759   52.4%     34.1s      28,487     5.74        5      211
+   1,105,933   55.3%     36.1s      28,553     5.76        3      212
+   1,155,263   57.8%     38.1s      24,663     5.06        4      215
+   1,202,178   60.1%     40.1s      23,450     4.69        3      210
+   1,261,706   63.1%     42.1s      29,744     6.11        3      215
+   1,319,686   66.0%     44.1s      28,753     5.77        4      210
+   1,383,058   69.2%     46.1s      31,686     6.49        4      215
+   1,435,119   71.8%     48.1s      26,009     5.22        4      210
+   1,493,899   74.7%     50.1s      29,389     6.02        4      215
+   1,554,776   77.7%     52.1s      30,425     6.12        3      211
+   1,606,352   80.3%     54.1s      25,785     5.26        5      214
+   1,665,591   83.3%     56.1s      29,584     5.98        3      212
+   1,724,906   86.2%     58.1s      29,657     6.04        4      213
+   1,772,713   88.6%     60.2s      23,854     4.84        6      213
+   1,835,076   91.8%     62.2s      31,046     6.27        4      212
+   1,892,353   94.6%     64.2s      28,623     5.84        4      214
+   1,949,916   97.5%     66.2s      28,779     5.78        4      211
+
+  Reached 2,000,000 — done.
+  [SystemCollector] Stopped — 35 total samples
+
+  Result: 2,000,000 msgs | 68.0s | 29,410 msg/s | 403.9 MB | 212 B/msg
+         Peak consumer lag: 1,919,066 msgs | Min lag: 167,279 msgs
+
+========================================================================
+  C3-MultiThread
+  tasks=4  batch=2048  queue=8192  poll=500ms
+========================================================================
+  Deleted connector: perf-case3-multithread
+  Deployed: perf-case3-multithread
+  Waiting for perf-case3-multithread RUNNING...
+    status error: 404 Client Error: Not Found for url: http://localhost:8083/connectors/perf-case3-multithread/status
+  perf-case3-multithread RUNNING (1 task(s)).
+  [SystemCollector] Started — sampling ['kafka-connect', 'kafka', 'kafka-broker-2', 'sqlserver', 'schema-registry'] every 1.0s
+  Waiting for topic 'perf_c3.AdventureWorks2019.Sales.SalesOrderDetailBig' to appear...
+  Topic found: perf_c3.AdventureWorks2019.Sales.SalesOrderDetailBig
+  Consuming 2,000,000 messages (idle_timeout=90s, sample_interval=2.0s) ...
+       Count      %   Elapsed       msg/s     MB/s    P50ms     AvgB
+  --------------------------------------------------------------------
+     186,353    9.3%      2.0s      93,147    18.79     2280      212
+     221,367   11.1%      4.0s      17,478     3.47       12      208
+     249,391   12.5%      6.0s      14,012     2.80       10      209
+     295,888   14.8%      8.0s      23,248     4.75        8      214
+     344,757   17.2%     10.0s      24,401     4.84        5      208
+     402,321   20.1%     12.0s      28,769     5.84        5      213
+     460,801   23.0%     14.0s      29,216     5.83        5      209
+     503,460   25.2%     16.0s      21,302     4.28        6      211
+     549,652   27.5%     18.0s      23,078     4.68        7      212
+     595,044   29.8%     20.0s      22,658     4.49        7      208
+     640,780   32.0%     22.0s      22,860     4.66        7      214
+     683,550   34.2%     24.0s      21,382     4.28        6      210
+     721,250   36.1%     26.0s      18,824     3.74        7      208
+     766,756   38.3%     28.0s      22,732     4.63        6      214
+     813,712   40.7%     30.0s      23,463     4.68        6      209
+     864,408   43.2%     32.0s      25,339     5.08        6      210
+     913,019   45.7%     34.0s      24,273     4.93        6      213
+     958,823   47.9%     36.0s      22,820     4.52        5      208
+     997,475   49.9%     38.1s      19,058     3.87        8      213
+   1,055,892   52.8%     40.1s      29,208     5.87        6      211
+   1,119,844   56.0%     42.1s      31,933     6.49        4      213
+   1,185,261   59.3%     44.1s      32,695     6.61        4      212
+   1,243,072   62.2%     46.1s      28,876     5.89        4      214
+   1,291,809   64.6%     48.1s      24,367     4.94        7      212
+   1,354,773   67.7%     50.1s      31,480     6.37        5      212
+   1,420,762   71.0%     52.1s      32,990     6.70        4      213
+   1,484,574   74.2%     54.1s      31,902     6.49        3      213
+   1,539,759   77.0%     56.1s      27,589     5.59        3      212
+   1,599,618   80.0%     58.1s      29,861     6.05        4      212
+   1,659,033   83.0%     60.1s      29,708     6.03        4      213
+   1,729,018   86.5%     62.1s      34,992     7.12        5      213
+   1,794,260   89.7%     64.1s      32,548     6.57        3      212
+   1,858,470   92.9%     66.1s      32,096     6.56        5      214
+   1,923,072   96.2%     68.1s      32,275     6.49        4      211
+   1,973,621   98.7%     70.1s      25,266     5.17        4      215
+
+  Reached 2,000,000 — done.
+  [SystemCollector] Stopped — 37 total samples
+
+  Result: 2,000,000 msgs | 71.4s | 28,022 msg/s | 403.9 MB | 212 B/msg
+         Peak consumer lag: 1,970,748 msgs | Min lag: 141,311 msgs
+
+========================================================================
+  C4-FullyTuned
+  tasks=4  batch=8192  queue=32768  poll=200ms
+========================================================================
+  Deleted connector: perf-case4-fullytuned
+  Deployed: perf-case4-fullytuned
+  Waiting for perf-case4-fullytuned RUNNING...
+    status error: 404 Client Error: Not Found for url: http://localhost:8083/connectors/perf-case4-fullytuned/status
+  perf-case4-fullytuned RUNNING (1 task(s)).
+  [SystemCollector] Started — sampling ['kafka-connect', 'kafka', 'kafka-broker-2', 'sqlserver', 'schema-registry'] every 1.0s
+  Waiting for topic 'perf_c4.AdventureWorks2019.Sales.SalesOrderDetailBig' to appear...
+  Topic found: perf_c4.AdventureWorks2019.Sales.SalesOrderDetailBig
+  Consuming 2,000,000 messages (idle_timeout=90s, sample_interval=2.0s) ...
+       Count      %   Elapsed       msg/s     MB/s    P50ms     AvgB
+  --------------------------------------------------------------------
+           0    0.0%      2.0s           0     0.00        0        0
+      89,037    4.5%      4.0s      44,518     8.99     6879      212
+     305,445   15.3%      6.0s     108,057    21.75     2840      211
+     358,790   17.9%      8.0s      26,617     5.28        3      208
+     404,821   20.2%     10.0s      23,016     4.70        4      214
+     462,417   23.1%     12.0s      28,798     5.73        3      209
+     525,473   26.3%     14.0s      31,525     6.39        4      212
+     583,323   29.2%     16.0s      28,789     5.74        4      209
+     648,222   32.4%     18.0s      32,446     6.58        4      212
+     703,928   35.2%     20.0s      27,853     5.55        3      209
+     755,880   37.8%     22.0s      25,971     5.24        4      212
+     812,884   40.6%     24.0s      28,426     5.70        3      210
+     874,935   43.7%     26.0s      30,980     6.23        4      211
+     925,845   46.3%     28.0s      25,447     5.12        5      211
+     986,227   49.3%     30.1s      29,682     5.94        3      210
+   1,040,777   52.0%     32.1s      27,275     5.53        5      212
+   1,102,139   55.1%     34.1s      30,668     6.16        4      210
+   1,160,301   58.0%     36.1s      29,034     5.94        4      215
+   1,219,464   61.0%     38.1s      29,577     5.94        3      211
+   1,278,513   63.9%     40.1s      29,191     5.99        3      215
+   1,337,794   66.9%     42.1s      29,633     5.94        4      210
+   1,387,484   69.4%     44.1s      24,845     5.12        4      216
+   1,439,210   72.0%     46.1s      25,863     5.19        4      210
+   1,499,221   75.0%     48.1s      30,000     6.15        4      215
+   1,558,108   77.9%     50.1s      29,236     5.86        4      210
+   1,614,670   80.7%     52.1s      28,258     5.80        4      215
+   1,660,078   83.0%     54.1s      22,702     4.57        4      211
+   1,726,080   86.3%     56.1s      32,997     6.70        4      213
+   1,783,598   89.2%     58.1s      28,745     5.82        3      212
+   1,840,544   92.0%     60.1s      28,434     5.76        3      212
+   1,900,717   95.0%     62.1s      30,086     6.11        3      213
+   1,954,687   97.7%     64.1s      26,778     5.41        4      212
+   1,998,848   99.9%     66.2s      20,962     4.30       11      215
+
+  Reached 2,000,000 — done.
+  [SystemCollector] Stopped — 34 total samples
+
+  Result: 2,000,000 msgs | 66.3s | 30,177 msg/s | 403.9 MB | 212 B/msg
+         Peak consumer lag: 1,971,541 msgs | Min lag: 144,292 msgs
+
+========================================================================
+  C5-UltraTuned
+  tasks=4  batch=16384  queue=65536  poll=100ms
+========================================================================
+  Deleted connector: perf-case5-ultratuned
+  Deployed: perf-case5-ultratuned
+  Waiting for perf-case5-ultratuned RUNNING...
+    status error: 404 Client Error: Not Found for url: http://localhost:8083/connectors/perf-case5-ultratuned/status
+  perf-case5-ultratuned RUNNING (1 task(s)).
+  [SystemCollector] Started — sampling ['kafka-connect', 'kafka', 'kafka-broker-2', 'sqlserver', 'schema-registry'] every 1.0s
+  Waiting for topic 'perf_c5.AdventureWorks2019.Sales.SalesOrderDetailBig' to appear...
+  Topic found: perf_c5.AdventureWorks2019.Sales.SalesOrderDetailBig
+  Consuming 2,000,000 messages (idle_timeout=90s, sample_interval=2.0s) ...
+       Count      %   Elapsed       msg/s     MB/s    P50ms     AvgB
+  --------------------------------------------------------------------
+           0    0.0%      2.0s           0     0.00        0        0
+     153,687    7.7%      4.0s      76,836    15.51     3940      212
+     234,385   11.7%      6.0s      39,605     7.91       90      209
+     281,899   14.1%      8.0s      23,747     4.83        7      214
+     332,616   16.6%     10.1s      25,344     5.06        5      209
+     394,008   19.7%     12.1s      29,919     6.03        4      212
+     443,685   22.2%     14.1s      24,834     4.98        4      210
+     508,579   25.4%     16.1s      32,149     6.46        4      211
+     565,387   28.3%     18.1s      28,397     5.71        7      211
+     626,887   31.3%     20.1s      30,747     6.17        6      210
+     678,883   33.9%     22.1s      25,744     5.20        5      212
+     734,437   36.7%     24.1s      27,769     5.52        6      208
+     795,798   39.8%     26.1s      30,677     6.22        4      213
+     860,549   43.0%     28.1s      32,371     6.46        4      209
+     916,701   45.8%     30.1s      28,076     5.69        6      212
+     959,382   48.0%     32.1s      21,336     4.23        5      208
+   1,016,128   50.8%     34.1s      28,319     5.76        4      213
+   1,071,896   53.6%     36.2s      27,771     5.54        3      209
+   1,132,121   56.6%     38.2s      30,112     6.17        5      215
+   1,190,524   59.5%     40.2s      29,194     5.87        4      211
+   1,248,662   62.4%     42.2s      29,055     5.94        6      214
+   1,305,805   65.3%     44.2s      28,558     5.76        4      211
+   1,349,159   67.5%     46.2s      21,669     4.38        6      212
+   1,411,040   70.6%     48.2s      30,936     6.31       41      214
+   1,469,470   73.5%     50.2s      29,214     5.89        4      212
+   1,529,343   76.5%     52.2s      29,929     6.11        6      214
+   1,576,962   78.8%     54.2s      23,792     4.76        6      210
+   1,640,405   82.0%     56.2s      31,718     6.52        3      216
+   1,703,206   85.2%     58.2s      31,400     6.30        4      210
+   1,758,787   87.9%     60.2s      27,772     5.70        4      215
+   1,814,137   90.7%     62.2s      27,670     5.56        3      211
+   1,867,839   93.4%     64.2s      26,848     5.52        3      216
+   1,920,556   96.0%     66.2s      26,358     5.29        3      210
+   1,998,910   99.9%     68.2s      37,920     7.75        4      214
+
+  Reached 2,000,000 — done.
+  [SystemCollector] Stopped — 35 total samples
+
+  Result: 2,000,000 msgs | 68.3s | 29,296 msg/s | 403.9 MB | 212 B/msg
+         Peak consumer lag: 1,887,697 msgs | Min lag: 84,011 msgs
+
+  Results saved: /home/anouar_zerrik1/projects/test-kafka-migration-perf/migration-perf-test/results/migration_results_20260225_134510.json
+  Latest  link:  /home/anouar_zerrik1/projects/test-kafka-migration-perf/migration-perf-test/results/migration_results_latest.json
+
+  Case               Tasks  Batch  Time(s)      msg/s    MB/s   TotalMB    AvgB    PeakLag
+  --------------------------------------------------------------------------------------------
+  C1-Baseline            1   2048     53.8     37,166    7.51     403.9    212B  2,000,000
+  C2-LargeBatch          1   8192     68.0     29,410    5.94     403.9    212B  1,919,066
+  C3-MultiThread         4   2048     71.4     28,022    5.66     403.9    212B  1,970,748
+  C4-FullyTuned          4   8192     66.3     30,177    6.09     403.9    212B  1,971,541
+  C5-UltraTuned          4  16384     68.3     29,296    5.92     403.9    212B  1,887,697
+
+  Generating observability charts...
+
+  Source : /home/anouar_zerrik1/projects/test-kafka-migration-perf/migration-perf-test/results/migration_results_latest.json
+  Output : /home/anouar_zerrik1/projects/test-kafka-migration-perf/migration-perf-test/results/charts
+
+  Kafka / consumer charts:
+  01_throughput_msg_rate.png
+  02_throughput_mb_rate.png
+  03_cumulative_messages.png
+  04_latency_p50.png
+  05_latency_p99.png
+  06_avg_message_size.png
+
+  Summary bars:
+  07_bar_total_time.png
+  08_bar_avg_throughput.png
+  09_bar_total_data.png
+
+  System metrics — kafka-connect:
+  10_sys_connect_cpu.png
+  11_sys_connect_mem.png
+  12_sys_connect_net_rx.png
+  13_sys_connect_net_tx.png
+  14_sys_connect_disk_r.png
+  15_sys_connect_disk_w.png
+
+  System metrics — Kafka broker:
+  16_sys_kafka_cpu.png
+  17_sys_kafka_mem.png
+  18_sys_kafka_net_tx.png
+
+  System metrics — SQL Server:
+  19_sys_sql_cpu.png
+  20_sys_sql_mem.png
+  21_sys_sql_disk_r.png
+
+  Connect metrics:
+  22_connect_task_states.png
+  23_consumer_lag.png
+
+  Multi-container panels:
+  27_sys_all_cpu_panel.png
+  28_sys_all_net_tx_panel.png
+
+  Heatmaps:
+  24_heatmap_kafka.png
+  25_heatmap_system.png
+
+  Radar chart:
+  26_radar_chart.png
+
+  Interactive dashboard:
+  dashboard.html  (62 KB)
+
+  Total files in /home/anouar_zerrik1/projects/test-kafka-migration-perf/migration-perf-test/results/charts:
+    01_throughput_msg_rate.png                                 153 KB
+    02_throughput_mb_rate.png                                  144 KB
+    03_cumulative_messages.png                                 142 KB
+    04_latency_p50.png                                          80 KB
+    05_latency_p99.png                                          83 KB
+    06_avg_message_size.png                                     87 KB
+    07_bar_total_time.png                                       47 KB
+    08_bar_avg_throughput.png                                   59 KB
+    09_bar_total_data.png                                       37 KB
+    10_sys_connect_cpu.png                                     110 KB
+    11_sys_connect_mem.png                                      64 KB
+    12_sys_connect_net_rx.png                                  105 KB
+    13_sys_connect_net_tx.png                                  103 KB
+    14_sys_connect_disk_r.png                                   83 KB
+    15_sys_connect_disk_w.png                                  110 KB
+    16_sys_kafka_cpu.png                                        89 KB
+    17_sys_kafka_mem.png                                        94 KB
+    18_sys_kafka_net_tx.png                                     84 KB
+    19_sys_sql_cpu.png                                         104 KB
+    20_sys_sql_mem.png                                          77 KB
+    21_sys_sql_disk_r.png                                       90 KB
+    22_connect_task_states.png                                  67 KB
+    23_consumer_lag.png                                        143 KB
+    24_heatmap_kafka.png                                        74 KB
+    25_heatmap_system.png                                      122 KB
+    26_radar_chart.png                                         148 KB
+    27_sys_all_cpu_panel.png                                   486 KB
+    28_sys_all_net_tx_panel.png                                508 KB
+    dashboard.html                                              62 KB

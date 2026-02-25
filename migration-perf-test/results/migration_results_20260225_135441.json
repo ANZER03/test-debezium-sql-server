@@ -1,0 +1,25 @@
+{
+  "timestamp": "2026-02-25T13:54:41.488390Z",
+  "config": {
+    "kafka_bootstrap": "localhost:9092",
+    "expected_rows": 2000000,
+    "sample_interval_sec": 2.0,
+    "sys_sample_sec": 1.0,
+    "connect_poll_sec": 5.0,
+    "monitored_containers": [
+      "kafka-connect",
+      "kafka",
+      "kafka-broker-2",
+      "sqlserver",
+      "schema-registry"
+    ]
+  },
+  "results": [
+    {
+      "connector": "perf-case1-largebatch",
+      "short_label": "C1-LargeBatch",
+      "label": "Case 1 \u2014 Baseline + LargeBatch\n(tasks=1, batch=16384, queue=8192, poll=1000ms)",
+      "error": "POST /connectors => HTTP 400: {\"error_code\":400,\"message\":\"Connector configuration is invalid and contains the following 1 error(s):\\nThe 'max.queue.size' value is invalid: Must be larger than the maximum batch size\\nYou can also find the above list of errors at the endpoint `/connector-plugins/{connectorType}/config/validate`\"}"
+    }
+  ]
+}
