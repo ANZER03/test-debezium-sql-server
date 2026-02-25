@@ -78,21 +78,23 @@ services:
       CLUSTER_ID: 'MkU3OEVBNTcwNTJDRkFCMz'            # MUST match broker 1's cluster ID exactly
 
   # ---------------------------------------------------------------------------
-  # Confluent Schema Registry
+  # Karapace Schema Registry (Aiven)
+  # Open-source replacement for Confluent Schema Registry.
   # Stores and serves Avro/JSON/Protobuf schemas for Kafka topics.
-  # Debezium Connect will automatically register CDC event schemas here.
   # ---------------------------------------------------------------------------
   schema-registry:
-    image: confluentinc/cp-schema-registry:7.7.7      # Confluent Schema Registry (already local)
+    image: ghcr.io/aiven-open/karapace:latest
     container_name: schema-registry
+    command: ["python3", "-m", "karapace"]
     depends_on:
-      - kafka                                          # Needs Kafka to store schemas in _schemas topic
+      - kafka
     ports:
-      - "8081:8081"                                    # REST API exposed on port 8081
+      - "8081:8081"
     environment:
-      SCHEMA_REGISTRY_HOST_NAME: schema-registry                                   # Hostname for this instance
-      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'kafka:29092,kafka-broker-2:29092'  # Kafka brokers to connect to
-      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081                               # Listen on all interfaces, port 8081
+      KARAPACE_ADVERTISED_HOSTNAME: schema-registry
+      KARAPACE_BOOTSTRAP_URI: 'kafka:29092,kafka-broker-2:29092'
+      KARAPACE_HOST: 0.0.0.0
+      KARAPACE_PORT: 8081
 
   # ---------------------------------------------------------------------------
   # SQL Server 2019 (Developer Edition)
@@ -121,6 +123,34 @@ services:
       timeout: 5s                                      # Timeout for each check
       retries: 10                                      # Number of retries before marking unhealthy
       start_period: 30s                                # Grace period before first check (SQL Server startup)
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL 15 — source database for Debezium PostgreSQL CDC benchmark
+  # Logical replication enabled via wal_level=logical in command args.
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: benchdb
+    command: >
+      postgres
+        -c wal_level=logical
+        -c max_replication_slots=10
+        -c max_wal_senders=10
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d benchdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
 
   # ---------------------------------------------------------------------------
   # Debezium Kafka Connect (custom image with Confluent Avro converter)
@@ -183,7 +213,7 @@ services:
       # -- Cluster configuration --
       KAFKA_CLUSTERS_0_NAME: local                                             # Display name for the cluster in UI
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092,kafka-broker-2:29092      # Kafka broker addresses
-      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8081             # Schema Registry URL for schema viewing
+      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8081             # Karapace Registry URL
       # -- Kafka Connect integration --
       KAFKA_CLUSTERS_0_KAFKACONNECT_0_NAME: debezium                           # Display name for Connect cluster in UI
       KAFKA_CLUSTERS_0_KAFKACONNECT_0_ADDRESS: http://kafka-connect:8083       # Connect REST API URL
@@ -193,3 +223,4 @@ services:
 # =============================================================================
 volumes:
   sqlserver-data:                                      # Persists SQL Server data files between restarts
+  postgres-data:                                       # Persists PostgreSQL data files between restarts
