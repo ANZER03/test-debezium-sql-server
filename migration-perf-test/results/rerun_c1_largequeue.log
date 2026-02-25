@@ -1,0 +1,158 @@
+========================================================================
+  Debezium Avro Migration Benchmark — 5-Case Observability Edition
+  5 Cases | 2,000,000 rows | System: ['kafka-connect', 'kafka', 'kafka-broker-2', 'sqlserver', 'schema-registry']
+  Kafka: localhost:9092  |  Connect: http://localhost:8083
+  Kafka sample: 2.0s  |  System sample: 1.0s  |  Connect poll: 5.0s
+========================================================================
+Waiting for Kafka Connect...
+  Kafka Connect is ready.
+
+========================================================================
+  C1-LargeQueue
+  tasks=1  batch=2048  queue=16384  poll=1000ms
+========================================================================
+  Deleted connector: perf-case1-largequeue
+  Deployed: perf-case1-largequeue
+  Waiting for perf-case1-largequeue RUNNING...
+    status error: 404 Client Error: Not Found for url: http://localhost:8083/connectors/perf-case1-largequeue/status
+  perf-case1-largequeue RUNNING (1 task(s)).
+  [SystemCollector] Started — sampling ['kafka-connect', 'kafka', 'kafka-broker-2', 'sqlserver', 'schema-registry'] every 1.0s
+  Waiting for topic 'perf_c1.AdventureWorks2019.Sales.SalesOrderDetailBig' to appear...
+  Topic found: perf_c1.AdventureWorks2019.Sales.SalesOrderDetailBig
+  Consuming 2,000,000 messages (idle_timeout=90s, sample_interval=2.0s) ...
+       Count      %   Elapsed       msg/s     MB/s    P50ms     AvgB
+  --------------------------------------------------------------------
+     147,575    7.4%      2.0s      73,748    14.88     2134      212
+     192,055    9.6%      4.0s      22,236     4.49        7      212
+     231,305   11.6%      6.0s      19,584     3.87        9      207
+     274,666   13.7%      8.0s      21,468     4.37        7      214
+     322,046   16.1%     10.0s      23,684     4.75        7      210
+     365,270   18.3%     12.0s      21,570     4.28        6      208
+     414,351   20.7%     14.0s      24,539     5.03        6      215
+     459,187   23.0%     16.0s      22,350     4.43        5      208
+     498,223   24.9%     18.0s      19,514     3.91        7      210
+     539,483   27.0%     20.0s      20,601     4.20        6      214
+     583,810   29.2%     22.0s      22,150     4.40        5      208
+     626,760   31.3%     24.0s      21,465     4.32        6      211
+     686,784   34.3%     26.1s      29,605     5.96        6      211
+     740,424   37.0%     28.1s      26,810     5.36        6      210
+     790,487   39.5%     30.1s      25,005     5.08        4      213
+     848,801   42.4%     32.1s      29,157     5.78        4      208
+     909,748   45.5%     34.1s      30,473     6.20        4      213
+     972,399   48.6%     36.1s      31,321     6.22        4      208
+   1,025,694   51.3%     38.1s      26,647     5.44        6      214
+   1,087,488   54.4%     40.1s      30,878     6.17        3      210
+   1,152,064   57.6%     42.1s      31,948     6.54        4      215
+   1,210,362   60.5%     44.1s      29,143     5.85        3      210
+   1,266,777   63.3%     46.1s      28,200     5.80        4      216
+   1,325,499   66.3%     48.1s      28,856     5.79        4      210
+   1,370,998   68.5%     50.1s      22,727     4.67        4      216
+   1,434,255   71.7%     52.1s      31,628     6.36        8      211
+   1,496,101   74.8%     54.1s      30,892     6.32        4      215
+   1,554,782   77.7%     56.1s      29,321     5.89        3      211
+   1,615,259   80.8%     58.2s      29,929     6.12        4      215
+   1,664,189   83.2%     60.2s      24,426     4.92        5      211
+   1,720,833   86.0%     62.2s      28,322     5.75        5      213
+   1,775,081   88.8%     64.2s      27,101     5.51        3      213
+   1,808,384   90.4%     66.2s      16,637     3.33        5      210
+   1,865,083   93.3%     68.2s      28,339     5.82        5      215
+   1,921,642   96.1%     70.2s      28,280     5.67        4      210
+   1,971,270   98.6%     72.2s      24,808     5.08        6      215
+
+  Reached 2,000,000 — done.
+  [SystemCollector] Stopped — 38 total samples
+
+  Result: 2,000,000 msgs | 74.0s | 27,016 msg/s | 403.9 MB | 212 B/msg
+         Peak consumer lag: 2,000,000 msgs | Min lag: 105,716 msgs
+
+  Results saved: /home/anouar_zerrik1/projects/test-kafka-migration-perf/migration-perf-test/results/migration_results_20260225_140110.json
+  Latest  link:  /home/anouar_zerrik1/projects/test-kafka-migration-perf/migration-perf-test/results/migration_results_latest.json
+
+  Case               Tasks  Batch  Time(s)      msg/s    MB/s   TotalMB    AvgB    PeakLag
+  --------------------------------------------------------------------------------------------
+  C1-LargeQueue          1   2048     74.0     27,016    5.46     403.9    212B  2,000,000
+
+  Generating observability charts...
+
+  Source : /home/anouar_zerrik1/projects/test-kafka-migration-perf/migration-perf-test/results/migration_results_latest.json
+  Output : /home/anouar_zerrik1/projects/test-kafka-migration-perf/migration-perf-test/results/charts
+
+  Kafka / consumer charts:
+  01_throughput_msg_rate.png
+  02_throughput_mb_rate.png
+  03_cumulative_messages.png
+  04_latency_p50.png
+  05_latency_p99.png
+  06_avg_message_size.png
+
+  Summary bars:
+  07_bar_total_time.png
+  08_bar_avg_throughput.png
+  09_bar_total_data.png
+
+  System metrics — kafka-connect:
+  10_sys_connect_cpu.png
+  11_sys_connect_mem.png
+  12_sys_connect_net_rx.png
+  13_sys_connect_net_tx.png
+  14_sys_connect_disk_r.png
+  15_sys_connect_disk_w.png
+
+  System metrics — Kafka broker:
+  16_sys_kafka_cpu.png
+  17_sys_kafka_mem.png
+  18_sys_kafka_net_tx.png
+
+  System metrics — SQL Server:
+  19_sys_sql_cpu.png
+  20_sys_sql_mem.png
+  21_sys_sql_disk_r.png
+
+  Connect metrics:
+  22_connect_task_states.png
+  23_consumer_lag.png
+
+  Multi-container panels:
+  27_sys_all_cpu_panel.png
+  28_sys_all_net_tx_panel.png
+
+  Heatmaps:
+  24_heatmap_kafka.png
+  25_heatmap_system.png
+
+  Radar chart:
+  26_radar_chart.png
+
+  Interactive dashboard:
+  dashboard.html  (25 KB)
+
+  Total files in /home/anouar_zerrik1/projects/test-kafka-migration-perf/migration-perf-test/results/charts:
+    01_throughput_msg_rate.png                                  81 KB
+    02_throughput_mb_rate.png                                   71 KB
+    03_cumulative_messages.png                                  74 KB
+    04_latency_p50.png                                          55 KB
+    05_latency_p99.png                                          59 KB
+    06_avg_message_size.png                                     97 KB
+    07_bar_total_time.png                                       30 KB
+    08_bar_avg_throughput.png                                   37 KB
+    09_bar_total_data.png                                       27 KB
+    10_sys_connect_cpu.png                                      55 KB
+    11_sys_connect_mem.png                                      70 KB
+    12_sys_connect_net_rx.png                                   59 KB
+    13_sys_connect_net_tx.png                                   61 KB
+    14_sys_connect_disk_r.png                                   54 KB
+    15_sys_connect_disk_w.png                                   58 KB
+    16_sys_kafka_cpu.png                                        58 KB
+    17_sys_kafka_mem.png                                        64 KB
+    18_sys_kafka_net_tx.png                                     60 KB
+    19_sys_sql_cpu.png                                          57 KB
+    20_sys_sql_mem.png                                          61 KB
+    21_sys_sql_disk_r.png                                       57 KB
+    22_connect_task_states.png                                  33 KB
+    23_consumer_lag.png                                         79 KB
+    24_heatmap_kafka.png                                        49 KB
+    25_heatmap_system.png                                       70 KB
+    26_radar_chart.png                                         107 KB
+    27_sys_all_cpu_panel.png                                   118 KB
+    28_sys_all_net_tx_panel.png                                115 KB
+    dashboard.html                                              25 KB
