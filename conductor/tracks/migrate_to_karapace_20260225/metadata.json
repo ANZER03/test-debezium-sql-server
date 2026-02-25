@@ -1,0 +1,8 @@
+{
+  "track_id": "migrate_to_karapace_20260225",
+  "type": "feature",
+  "status": "new",
+  "created_at": "2026-02-25T14:30:00Z",
+  "updated_at": "2026-02-25T14:30:00Z",
+  "description": "Migrate from Confluent Schema Registry to Karapace and implement Avro serialization across the CDC pipeline."
+}
