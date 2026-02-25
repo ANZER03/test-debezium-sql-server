@@ -1,0 +1,55 @@
+{
+    "name": "sqlserver-cdc-connector",
+
+    "config": {
+        "connector.class": "io.debezium.connector.sqlserver.SqlServerConnector",
+
+        "_comment_connection": "SQL Server connection — uses Docker service name for container networking",
+        "database.hostname": "sqlserver",
+        "database.port": "1433",
+        "database.user": "sa",
+        "database.password": "YourStrong!Passw0rd",
+        "database.names": "AdventureWorks2019",
+        "database.encrypt": "false",
+        "database.trustServerCertificate": "true",
+
+        "_comment_topic_prefix": "Avro-compatible prefix (underscores only — hyphens are rejected by Avro schema naming rules). Topics will be: aw_mssql.AdventureWorks2019.<schema>.<table>",
+        "topic.prefix": "aw_mssql",
+
+        "_comment_tables": "All 5 tables with CDC enabled in enable-cdc.sql. Format: <schema>.<table>",
+        "table.include.list": "Person.Person,Sales.Customer,Sales.SalesOrderHeader,Sales.SalesOrderDetail,Production.Product",
+
+        "_comment_schema_history": "Debezium persists DDL schema change history to this internal topic so it can reconstruct table schemas across restarts. Must use 1 partition (ordered log).",
+        "schema.history.internal.kafka.bootstrap.servers": "kafka:29092,kafka-broker-2:29092",
+        "schema.history.internal.kafka.topic": "schema-changes.aw_mssql",
+
+        "_comment_snapshot": "initial = snapshot all existing rows first, then switch to streaming CDC. snapshot isolation level prevents dirty reads during the snapshot scan.",
+        "snapshot.mode": "initial",
+        "snapshot.isolation.level": "snapshot",
+
+        "_comment_perf": "Benchmark-proven settings (C1 Baseline, 37,166 msg/s): tasks=1 avoids CDC contention on a single table; batch=2048 balances fill-time vs GC; queue must be strictly > batch.",
+        "tasks.max": "1",
+        "max.batch.size": "2048",
+        "max.queue.size": "8192",
+        "poll.interval.ms": "1000",
+
+        "_comment_tombstones": "Emit a tombstone (null-value) record after each DELETE so Kafka log compaction can reclaim space for deleted keys.",
+        "tombstones.on.delete": "true",
+
+        "_comment_signals": "Signal table (dbo.debezium_signal) is used for on-demand incremental snapshots. Kafka signal channel allows sending signals without direct DB access.",
+        "signal.enabled.channels": "source,kafka",
+        "signal.data.collection": "AdventureWorks2019.dbo.debezium_signal",
+        "signal.kafka.topic": "aw_mssql-signal",
+        "signal.kafka.bootstrap.servers": "kafka:29092,kafka-broker-2:29092",
+        "signal.kafka.groupId": "debezium-signal-consumer",
+
+        "_comment_incremental_snapshot": "Chunk size for incremental snapshots triggered via signals. 2048 matches max.batch.size to keep memory usage predictable.",
+        "incremental.snapshot.chunk.size": "2048",
+
+        "_comment_converters": "Confluent AvroConverter: schemas registered once in Schema Registry, messages carry only a 5-byte header (0x00 + 4-byte schema ID) + compact binary payload. ~90% smaller than JSON with embedded schema.",
+        "key.converter": "io.confluent.connect.avro.AvroConverter",
+        "key.converter.schema.registry.url": "http://schema-registry:8081",
+        "value.converter": "io.confluent.connect.avro.AvroConverter",
+        "value.converter.schema.registry.url": "http://schema-registry:8081"
+    }
+}
