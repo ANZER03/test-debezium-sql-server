@@ -1,0 +1,36 @@
+{
+  "name": "prod-sqlserver-migration",
+  "config": {
+    "connector.class": "io.debezium.connector.sqlserver.SqlServerConnector",
+
+    "database.hostname": "sqlserver",
+    "database.port": "1433",
+    "database.user": "sa",
+    "database.password": "${file:/kafka/external-secrets/mssql.properties:database.password}",
+    "database.names": "AdventureWorks2019",
+    "database.encrypt": "false",
+    "database.trustServerCertificate": "true",
+
+    "topic.prefix": "prod_mssql",
+
+    "table.include.list": "Sales.SalesOrderDetailBig",
+
+    "schema.history.internal.kafka.bootstrap.servers": "kafka:29092,kafka-broker-2:29092",
+    "schema.history.internal.kafka.topic": "schema-changes.prod_mssql",
+
+    "snapshot.mode": "initial",
+    "snapshot.isolation.level": "snapshot",
+
+    "tasks.max": "1",
+    "max.batch.size": "2048",
+    "max.queue.size": "8192",
+    "poll.interval.ms": "1000",
+
+    "tombstones.on.delete": "false",
+
+    "key.converter": "io.confluent.connect.avro.AvroConverter",
+    "key.converter.schema.registry.url": "http://schema-registry:8081",
+    "value.converter": "io.confluent.connect.avro.AvroConverter",
+    "value.converter.schema.registry.url": "http://schema-registry:8081"
+  }
+}
